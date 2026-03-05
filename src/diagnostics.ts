@@ -141,7 +141,7 @@ export async function registerDiagnosticsListener(
       pendingUsageMap.delete(sessionKey);
     }
 
-    logger.debug?.(`[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, tokens=${usage.total || "?"}, usage=${usage || "?"}`);
+  logger.debug?.(`[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, tokens=${usage.total || "?"}, usage=${JSON.stringify(usage) || "?"}`);
   });
 
   logger.info("[otel] Subscribed to OpenClaw diagnostic events (model.usage, etc.)");
