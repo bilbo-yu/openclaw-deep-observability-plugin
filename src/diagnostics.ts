@@ -72,7 +72,7 @@ export async function registerDiagnosticsListener(
 
   const unsubscribe = onDiagnosticEvent((evt: any) => {
     if (evt.type !== "model.usage") return;
-    logger.info?.("[otel] evt JSON:", JSON.stringify(evt, null, 2));
+    // logger.info?.("[otel] evt JSON:", JSON.stringify(evt, null, 2));
     const sessionKey = evt.sessionKey || "unknown";
     const usage = evt.usage || {};
     const costUsd = evt.costUsd;
