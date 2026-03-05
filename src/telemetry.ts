@@ -216,13 +216,13 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
   };
 
   const histograms: OtelHistograms = {
-    tokenHistogram: meter.create_histogram(
+    tokenHistogram: meter.createHistogram(
         "gen_ai.client.token.usage",{
           unit: "token",
           description: "Measures number of input and output tokens used",
         }
     ),
-    llmDurationHistogram: meter.create_histogram(
+    llmDurationHistogram: meter.createHistogram(
         "gen_ai.client.operation.duration",{
           unit: "s",
           description: "GenAI operation duration",
