@@ -393,7 +393,9 @@ export function registerHooks(
               "openclaw.agent.id": agentId,
             };
             counters.tokensPrompt.add(totalInputTokens + cacheReadTokens + cacheWriteTokens, metricAttrs);
+            histograms.tokenHistogram.record(totalInputTokens + cacheReadTokens + cacheWriteTokens, { ...metricAttrs, "gen_ai.token.type": "input" });
             counters.tokensCompletion.add(totalOutputTokens, metricAttrs);
+            histograms.tokenHistogram.record(totalOutputTokens, { ...metricAttrs, "gen_ai.token.type": "output" });
             counters.tokensTotal.add(totalTokens, metricAttrs);
             counters.llmRequests.add(1, metricAttrs);
           }

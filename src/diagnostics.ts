@@ -72,7 +72,7 @@ export async function registerDiagnosticsListener(
 
   const unsubscribe = onDiagnosticEvent((evt: any) => {
     if (evt.type !== "model.usage") return;
-
+    logger.info?.("[otel] model.usage event:", evt);
     const sessionKey = evt.sessionKey || "unknown";
     const usage = evt.usage || {};
     const costUsd = evt.costUsd;
@@ -97,9 +97,11 @@ export async function registerDiagnosticsListener(
 
     if (usage.input) {
       counters.tokensPrompt.add(usage.input, metricAttrs);
+      histograms.tokenHistogram.record(usage.input, { ...metricAttrs, "gen_ai.token.type": "input" });
     }
     if (usage.output) {
       counters.tokensCompletion.add(usage.output, metricAttrs);
+      histograms.tokenHistogram.record(usage.output, { ...metricAttrs, "gen_ai.token.type": "output" });
     }
     if (usage.cacheRead) {
       counters.tokensPrompt.add(usage.cacheRead, { ...metricAttrs, "token.type": "cache_read" });
@@ -122,6 +124,7 @@ export async function registerDiagnosticsListener(
     // Record LLM duration
     if (typeof evt.durationMs === "number") {
       histograms.llmDuration.record(evt.durationMs, metricAttrs);
+      histograms.llmDurationHistogram.record(evt.durationMs * 1000.0, metricAttrs);
     }
 
     counters.llmRequests.add(1, metricAttrs);

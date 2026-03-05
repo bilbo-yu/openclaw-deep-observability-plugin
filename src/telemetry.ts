@@ -65,6 +65,10 @@ export interface OtelCounters {
 }
 
 export interface OtelHistograms {
+  /** LLM token usage distribution */
+  tokenHistogram: Histogram;
+  /** LLM request duration distribution in seconds */
+  llmDurationHistogram: Histogram;
   /** LLM request duration in ms */
   llmDuration: Histogram;
   /** Tool execution duration in ms */
@@ -212,6 +216,18 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
   };
 
   const histograms: OtelHistograms = {
+    tokenHistogram: meter.create_histogram(
+        "gen_ai.client.token.usage",{
+          unit: "token",
+          description: "Measures number of input and output tokens used",
+        }
+    ),
+    llmDurationHistogram: meter.create_histogram(
+        "gen_ai.client.operation.duration",{
+          unit: "s",
+          description: "GenAI operation duration",
+        }
+    ),
     llmDuration: meter.createHistogram("openclaw.llm.duration", {
       description: "LLM request duration",
       unit: "ms",
