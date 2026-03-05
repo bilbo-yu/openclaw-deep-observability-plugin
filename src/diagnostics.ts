@@ -72,7 +72,7 @@ export async function registerDiagnosticsListener(
 
   const unsubscribe = onDiagnosticEvent((evt: any) => {
     if (evt.type !== "model.usage") return;
-    logger.info?.("[otel] model.usage event:", evt);
+    logger.info?.("[otel] evt JSON:", JSON.stringify(evt, null, 2));
     const sessionKey = evt.sessionKey || "unknown";
     const usage = evt.usage || {};
     const costUsd = evt.costUsd;
@@ -94,14 +94,19 @@ export async function registerDiagnosticsListener(
       "gen_ai.response.model": model,
       "openclaw.provider": provider,
     };
+    const otelMetricAttrs = {
+      "gen_ai.request.model": model,
+      "gen_ai.response.model": model,
+      "gen_ai.system": provider,
+    };
 
     if (usage.input) {
       counters.tokensPrompt.add(usage.input, metricAttrs);
-      histograms.tokenHistogram.record(usage.input, { ...metricAttrs, "gen_ai.token.type": "input" });
+      histograms.tokenHistogram.record(usage.input, { ...otelMetricAttrs, "gen_ai.token.type": "input" });
     }
     if (usage.output) {
       counters.tokensCompletion.add(usage.output, metricAttrs);
-      histograms.tokenHistogram.record(usage.output, { ...metricAttrs, "gen_ai.token.type": "output" });
+      histograms.tokenHistogram.record(usage.output, { ...otelMetricAttrs, "gen_ai.token.type": "output" });
     }
     if (usage.cacheRead) {
       counters.tokensPrompt.add(usage.cacheRead, { ...metricAttrs, "token.type": "cache_read" });
@@ -124,7 +129,7 @@ export async function registerDiagnosticsListener(
     // Record LLM duration
     if (typeof evt.durationMs === "number") {
       histograms.llmDuration.record(evt.durationMs, metricAttrs);
-      histograms.llmDurationHistogram.record(evt.durationMs * 1000.0, metricAttrs);
+      histograms.llmDurationHistogram.record(evt.durationMs * 1000.0, otelMetricAttrs);
     }
 
     counters.llmRequests.add(1, metricAttrs);
