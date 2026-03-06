@@ -65,6 +65,7 @@ export interface SessionTraceContext {
   agentSpan?: Span;
   agentContext?: Context;
   startTime: number;
+  agentEndTime?: number;
 }
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
@@ -368,7 +369,7 @@ function handleMessageProcessed(evt: any): void {
 
       // End agent span if it exists and is different from root
       if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
-        sessionCtx.agentSpan.end();
+        sessionCtx.agentSpan.end(sessionCtx.agentSpan || Date.now());
       }
 
       sessionCtx.rootSpan.end();

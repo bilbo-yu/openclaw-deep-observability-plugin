@@ -412,8 +412,8 @@ export function registerHooks(
           } else {
             agentSpan.setStatus({ code: SpanStatusCode.OK });
           }
-
-          agentSpan.end();
+          sessionCtx.agentEndTime = Date.now();
+          // agentSpan.end();
         }
 
         // End the root request span
