@@ -233,6 +233,7 @@ export function getPendingUsage(sessionKey: string): PendingUsageData | undefine
  * Enrich a span with usage data from diagnostic event.
  */
 export function enrichSpanWithUsage(span: Span, data: PendingUsageData): void {
+  diagnosticsLogger.debug?.(`[otel] enrichSpanWithUsage: usage=${JSON.stringify(usage) || "?"}`);
   const usage = data.usage || {};
 
   // GenAI semantic convention attributes
