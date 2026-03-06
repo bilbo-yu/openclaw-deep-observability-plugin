@@ -25,20 +25,20 @@
 import { SpanKind, SpanStatusCode, context, trace, type Span, type Context } from "@opentelemetry/api";
 import type { TelemetryRuntime } from "./telemetry.js";
 import type { OtelObservabilityConfig } from "./config.js";
-import { activeAgentSpans, getPendingUsage, enrichSpanWithUsage, hasDiagnosticsSupport } from "./diagnostics.js";
+import { sessionContextMap, getPendingUsage, enrichSpanWithUsage, hasDiagnosticsSupport } from "./diagnostics.js";
 import { checkToolSecurity, checkMessageSecurity, type SecurityCounters } from "./security.js";
 
 /** Active trace context for a session — allows connecting spans into one trace. */
-interface SessionTraceContext {
-  rootSpan: Span;
-  rootContext: Context;
-  agentSpan?: Span;
-  agentContext?: Context;
-  startTime: number;
-}
+// interface SessionTraceContext {
+//   rootSpan: Span;
+//   rootContext: Context;
+//   agentSpan?: Span;
+//   agentContext?: Context;
+//   startTime: number;
+// }
 
-/** Map of sessionKey → active trace context. Cleaned up on agent_end. */
-const sessionContextMap = new Map<string, SessionTraceContext>();
+// /** Map of sessionKey → active trace context. Cleaned up on agent_end. */
+// const sessionContextMap = new Map<string, SessionTraceContext>();
 
 /**
  * Register all plugin hooks on the OpenClaw plugin API.
@@ -67,60 +67,60 @@ export function registerHooks(
     dangerousCommand: counters.dangerousCommand,
   };
 
-  api.on(
-    "message_received",
-    async (event: any, ctx: any) => {
-      try {
-        const channel = event?.channel || "unknown";
-        const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-        const from = event?.from || event?.senderId || "unknown";
-        const messageText = event?.text || event?.message || "";
+  // api.on(
+  //   "message_received",
+  //   async (event: any, ctx: any) => {
+  //     try {
+  //       const channel = event?.channel || "unknown";
+  //       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
+  //       const from = event?.from || event?.senderId || "unknown";
+  //       const messageText = event?.text || event?.message || "";
 
-        // Create root span for this request
-        const rootSpan = tracer.startSpan("openclaw.request", {
-          kind: SpanKind.SERVER,
-          attributes: {
-            "openclaw.message.channel": channel,
-            "openclaw.session.key": sessionKey,
-            "openclaw.message.direction": "inbound",
-            "openclaw.message.from": from,
-          },
-        });
+  //       // Create root span for this request
+  //       const rootSpan = tracer.startSpan("openclaw.request", {
+  //         kind: SpanKind.SERVER,
+  //         attributes: {
+  //           "openclaw.message.channel": channel,
+  //           "openclaw.session.key": sessionKey,
+  //           "openclaw.message.direction": "inbound",
+  //           "openclaw.message.from": from,
+  //         },
+  //       });
 
-        // ═══ SECURITY DETECTION 2: Prompt Injection ═══════════════
-        if (messageText && typeof messageText === "string" && messageText.length > 0) {
-          const securityEvent = checkMessageSecurity(
-            messageText,
-            rootSpan,
-            securityCounters,
-            sessionKey
-          );
-          if (securityEvent) {
-            logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
-          }
-        }
+  //       // ═══ SECURITY DETECTION 2: Prompt Injection ═══════════════
+  //       if (messageText && typeof messageText === "string" && messageText.length > 0) {
+  //         const securityEvent = checkMessageSecurity(
+  //           messageText,
+  //           rootSpan,
+  //           securityCounters,
+  //           sessionKey
+  //         );
+  //         if (securityEvent) {
+  //           logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
+  //         }
+  //       }
 
-        // Store the context so child spans can reference it
-        const rootContext = trace.setSpan(context.active(), rootSpan);
+  //       // Store the context so child spans can reference it
+  //       const rootContext = trace.setSpan(context.active(), rootSpan);
 
-        sessionContextMap.set(sessionKey, {
-          rootSpan,
-          rootContext,
-          startTime: Date.now(),
-        });
+  //       sessionContextMap.set(sessionKey, {
+  //         rootSpan,
+  //         rootContext,
+  //         startTime: Date.now(),
+  //       });
 
-        // Record message count metric
-        counters.messagesReceived.add(1, {
-          "openclaw.message.channel": channel,
-        });
+  //       // Record message count metric
+  //       counters.messagesReceived.add(1, {
+  //         "openclaw.message.channel": channel,
+  //       });
 
-        logger.debug?.(`[otel] Root span started for session=${sessionKey}`);
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-    },
-    { priority: 100 } // High priority — run first to establish context
-  );
+  //       logger.debug?.(`[otel] Root span started for session=${sessionKey}`);
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
+  //   },
+  //   { priority: 100 } // High priority — run first to establish context
+  // );
 
   logger.info("[otel] Registered message_received hook (via api.on)");
 
@@ -169,8 +169,6 @@ export function registerHooks(
           });
         }
 
-        // Register in activeAgentSpans for diagnostics integration
-        activeAgentSpans.set(sessionKey, agentSpan);
 
         logger.debug?.(`[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}`);
       } catch {
@@ -419,16 +417,15 @@ export function registerHooks(
         }
 
         // End the root request span
-        if (sessionCtx?.rootSpan && sessionCtx.rootSpan !== sessionCtx.agentSpan) {
-          const totalMs = Date.now() - sessionCtx.startTime;
-          sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
-          sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
-          sessionCtx.rootSpan.end();
-        }
+        // if (sessionCtx?.rootSpan && sessionCtx.rootSpan !== sessionCtx.agentSpan) {
+        //   const totalMs = Date.now() - sessionCtx.startTime;
+        //   sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
+        //   sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
+        //   sessionCtx.rootSpan.end();
+        // }
 
         // Clean up
-        sessionContextMap.delete(sessionKey);
-        activeAgentSpans.delete(sessionKey);
+        // sessionContextMap.delete(sessionKey);
 
         logger.debug?.(`[otel] Trace completed for session=${sessionKey}`);
       } catch {

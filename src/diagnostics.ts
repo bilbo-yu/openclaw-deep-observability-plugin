@@ -5,10 +5,16 @@
  * This combines the best of both approaches:
  * - Our plugin: Connected traces (request → agent turn → tools)
  * - Official diagnostics: Accurate cost, token counts, context limits
+ *
+ * Diagnostic events handled:
+ * - message.queued: Creates root span for request lifecycle
+ * - message.processed: Ends root span after request completion
+ * - model.usage: Token usage and cost data
  */
 
-import type { Span } from "@opentelemetry/api";
+import { SpanKind, SpanStatusCode, context, trace, type Span, type Context } from "@opentelemetry/api";
 import type { TelemetryRuntime } from "./telemetry.js";
+import { checkMessageSecurity, type SecurityCounters } from "./security.js";
 
 // Import from OpenClaw plugin SDK (loaded lazily)
 let onDiagnosticEvent: ((listener: (evt: any) => void) => () => void) | null = null;
@@ -50,10 +56,43 @@ interface PendingUsageData {
 const pendingUsageMap = new Map<string, PendingUsageData>();
 
 /** Map of sessionKey → active agent span (set by hooks.ts) */
-export const activeAgentSpans = new Map<string, Span>();
+// export const activeAgentSpans = new Map<string, Span>();
+
+/** Active trace context for a session — allows connecting spans into one trace. */
+export interface SessionTraceContext {
+  rootSpan: Span;
+  rootContext: Context;
+  agentSpan?: Span;
+  agentContext?: Context;
+  startTime: number;
+}
+
+/** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
+export const sessionContextMap = new Map<string, SessionTraceContext>();
+
+/** Tracer instance — set during registerDiagnosticsListener */
+let tracer: ReturnType<typeof trace.getTracer>;
+
+/** Counters for metrics */
+let telemetryCounters: TelemetryRuntime["counters"];
+
+/** Security counters for detection */
+let securityCounters: SecurityCounters | null = null;
+
+/** Logger instance */
+let diagnosticsLogger: any;
 
 /**
- * Register diagnostic event listener to capture model.usage events.
+ * Set security counters for message security checks.
+ * Called from hooks.ts during initialization.
+ */
+export function setSecurityCounters(counters: SecurityCounters): void {
+  securityCounters = counters;
+}
+
+/**
+ * Register diagnostic event listener to capture message.queued, message.processed,
+ * and model.usage events.
  * Returns unsubscribe function.
  */
 export async function registerDiagnosticsListener(
@@ -68,10 +107,36 @@ export async function registerDiagnosticsListener(
     return () => {};
   }
 
+  // Initialize global references
+  tracer = telemetry.tracer;
+  telemetryCounters = telemetry.counters;
+  diagnosticsLogger = logger;
+
   const { counters, histograms } = telemetry;
 
   const unsubscribe = onDiagnosticEvent((evt: any) => {
-    if (evt.type !== "model.usage") return;
+    const evtType = evt.type;
+
+    // ═══════════════════════════════════════════════════════════════
+    // message.queued — Create root span for request lifecycle
+    // ═══════════════════════════════════════════════════════════════
+    if (evtType === "message.queued") {
+      handleMessageQueued(evt);
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // message.processed — End root span after request completion
+    // ═══════════════════════════════════════════════════════════════
+    if (evtType === "message.processed") {
+      handleMessageProcessed(evt);
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // model.usage — Token usage and cost data
+    // ═══════════════════════════════════════════════════════════════
+    if (evtType !== "model.usage") return;
     // logger.info?.("[otel] evt JSON:", JSON.stringify(evt, null, 2));
     const sessionKey = evt.sessionKey || "unknown";
     const usage = evt.usage || {};
@@ -135,9 +200,12 @@ export async function registerDiagnosticsListener(
     counters.llmRequests.add(1, metricAttrs);
 
     // If we have an active agent span for this session, enrich it now
-    const agentSpan = activeAgentSpans.get(sessionKey);
-    if (agentSpan) {
-      enrichSpanWithUsage(agentSpan, evt);
+    // const agentSpan = activeAgentSpans.get(sessionKey);
+    const sessionCtx = sessionContextMap.get(sessionKey);
+
+        // End the agent turn span
+    if (sessionCtx?.agentSpan) {
+      enrichSpanWithUsage(sessionCtx.agentSpan, evt);
       pendingUsageMap.delete(sessionKey);
     }
 
@@ -219,4 +287,101 @@ export function hasDiagnosticsSupport(): boolean {
 export async function checkDiagnosticsSupport(): Promise<boolean> {
   await loadSdk();
   return onDiagnosticEvent !== null;
+}
+
+/**
+ * Handle message.queued diagnostic event — creates root span for request lifecycle.
+ * This replaces the message_received hook.
+ */
+function handleMessageQueued(evt: any): void {
+  try {
+    const channel = evt?.channel || "unknown";
+    const sessionKey = evt?.sessionKey || "unknown";
+    const from = evt?.from || evt?.senderId || "unknown";
+    const messageText = evt?.text || evt?.message || "";
+
+    // Create root span for this request
+    const rootSpan = tracer.startSpan("openclaw.request", {
+      kind: SpanKind.SERVER,
+      attributes: {
+        "openclaw.message.channel": channel,
+        "openclaw.session.key": sessionKey,
+        "openclaw.message.direction": "inbound",
+        "openclaw.message.from": from,
+      },
+    });
+
+    // ═══ SECURITY DETECTION: Prompt Injection ═════════════
+    if (messageText && typeof messageText === "string" && messageText.length > 0 && securityCounters) {
+      const securityEvent = checkMessageSecurity(
+        messageText,
+        rootSpan,
+        securityCounters,
+        sessionKey
+      );
+      if (securityEvent) {
+        diagnosticsLogger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
+      }
+    }
+
+    // Store the context so child spans can reference it
+    const rootContext = trace.setSpan(context.active(), rootSpan);
+
+    sessionContextMap.set(sessionKey, {
+      rootSpan,
+      rootContext,
+      startTime: Date.now(),
+    });
+
+    // Record message count metric
+    telemetryCounters.messagesReceived.add(1, {
+      "openclaw.message.channel": channel,
+    });
+
+    diagnosticsLogger.debug?.(`[otel] Root span started (message.queued) for session=${sessionKey}`);
+  } catch (error) {
+    diagnosticsLogger.error?.(`[otel] Error in handleMessageQueued: ${error}`);
+  }
+}
+
+/**
+ * Handle message.processed diagnostic event — ends root span after request completion.
+ */
+function handleMessageProcessed(evt: any): void {
+  const sessionKey = evt?.sessionKey || "unknown";
+  try {
+    const success = evt?.success !== false;
+    const errorMsg = evt?.error;
+
+    const sessionCtx = sessionContextMap.get(sessionKey);
+
+    if (sessionCtx?.rootSpan) {
+      const totalMs = Date.now() - sessionCtx.startTime;
+      sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
+
+      if (errorMsg) {
+        sessionCtx.rootSpan.setAttribute("openclaw.request.error", String(errorMsg).slice(0, 500));
+        sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(errorMsg).slice(0, 200) });
+      } else {
+        sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+
+      // End agent span if it exists and is different from root
+      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
+        sessionCtx.agentSpan.end();
+      }
+
+      sessionCtx.rootSpan.end();
+
+      diagnosticsLogger.debug?.(`[otel] Root span ended (message.processed) for session=${sessionKey}, duration=${totalMs}ms`);
+    }
+
+    // Clean up
+    sessionContextMap.delete(sessionKey);
+  } catch (error) {
+    diagnosticsLogger.error?.(`[otel] Error in handleMessageProcessed: ${error}`);
+  } finally {
+    // Clean up
+    sessionContextMap.delete(sessionKey);
+  }
 }
