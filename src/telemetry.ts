@@ -22,6 +22,19 @@ import { OTLPMetricExporter as OTLPMetricExporterGRPC } from "@opentelemetry/exp
 
 import type { OtelObservabilityConfig } from "./config.js";
 
+const _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS = [
+    0.32,
+    0.64,
+    1.28,
+    2.56,
+    5.12,
+    10.24,
+    20.48,
+    40.96,
+    81.92,
+    163.84,
+    327.68,
+]
 // ── Types ───────────────────────────────────────────────────────────
 
 export interface TelemetryRuntime {
@@ -53,7 +66,7 @@ export interface OtelCounters {
   /** Messages received */
   messagesReceived: Counter;
   /** Messages sent */
-  messagesSent: Counter;
+  // messagesSent: Counter;
   /** Security events detected */
   securityEvents: Counter;
   /** Sensitive file access attempts */
@@ -69,8 +82,10 @@ export interface OtelHistograms {
   tokenHistogram: Histogram;
   /** LLM request duration distribution in seconds */
   llmDurationHistogram: Histogram;
+  /** Agent request processing duration distribution in seconds */
+  messageDurationHistogram: Histogram;
   /** LLM request duration in ms */
-  llmDuration: Histogram;
+  // llmDuration: Histogram;
   /** Tool execution duration in ms */
   toolDuration: Histogram;
   /** Agent turn duration in ms */
@@ -89,6 +104,7 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
     [ATTR_SERVICE_NAME]: config.serviceName,
     [ATTR_SERVICE_VERSION]: "0.1.0",
     "openclaw.plugin": "otel-observability",
+    "agent.type": "openclaw",
     ...config.resourceAttributes,
   };
 
@@ -188,14 +204,14 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
       description: "Total session resets",
       unit: "resets",
     }),
-    messagesReceived: meter.createCounter("openclaw.messages.received", {
-      description: "Total inbound messages",
-      unit: "messages",
+    messagesReceived: meter.createCounter("gen_ai.agent.requests", {
+      description: "Total inbound agent requests",
+      unit: "requests",
     }),
-    messagesSent: meter.createCounter("openclaw.messages.sent", {
-      description: "Total outbound messages",
-      unit: "messages",
-    }),
+    // messagesSent: meter.createCounter("openclaw.messages.sent", {
+    //   description: "Total outbound messages",
+    //   unit: "messages",
+    // }),
     // Security detection counters
     securityEvents: meter.createCounter("openclaw.security.events", {
       description: "Total security events detected",
@@ -226,12 +242,18 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
         "gen_ai.client.operation.duration",{
           unit: "s",
           description: "GenAI operation duration",
+          explicit_bucket_boundaries_advisory: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
         }
     ),
-    llmDuration: meter.createHistogram("openclaw.llm.duration", {
-      description: "LLM request duration",
-      unit: "ms",
-    }),
+    messageDurationHistogram: meter.createHistogram("gen_ai.agent.request.duration", {
+        unit: "s",
+        description: "Agent request processing duration",
+        explicit_bucket_boundaries_advisory: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
+      }),
+    // llmDuration: meter.createHistogram("openclaw.llm.duration", {
+    //   description: "LLM request duration",
+    //   unit: "ms",
+    // }),
     toolDuration: meter.createHistogram("openclaw.tool.duration", {
       description: "Tool execution duration",
       unit: "ms",
@@ -268,7 +290,7 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
       counters.toolCalls.add(0, idleAttrs);
       counters.toolErrors.add(0, idleAttrs);
       counters.messagesReceived.add(0, idleAttrs);
-      counters.messagesSent.add(0, idleAttrs);
+      // counters.messagesSent.add(0, idleAttrs);
       counters.sessionResets.add(0, idleAttrs);
 
       // Security counters

@@ -77,6 +77,9 @@ let tracer: ReturnType<typeof trace.getTracer>;
 /** Counters for metrics */
 let telemetryCounters: TelemetryRuntime["counters"];
 
+/** Guages for metrics */
+let telemetryHistograms: TelemetryRuntime["histograms"];
+
 /** Security counters for detection */
 let securityCounters: SecurityCounters | null = null;
 
@@ -111,6 +114,8 @@ export async function registerDiagnosticsListener(
   // Initialize global references
   tracer = telemetry.tracer;
   telemetryCounters = telemetry.counters;
+  telemetryHistograms = telemetry.histograms;
+
   diagnosticsLogger = logger;
 
   const { counters, histograms } = telemetry;
@@ -194,7 +199,7 @@ export async function registerDiagnosticsListener(
 
     // Record LLM duration
     if (typeof evt.durationMs === "number") {
-      histograms.llmDuration.record(evt.durationMs, metricAttrs);
+      // histograms.llmDuration.record(evt.durationMs, metricAttrs);
       histograms.llmDurationHistogram.record(evt.durationMs * 1000.0, otelMetricAttrs);
     }
 
@@ -337,7 +342,7 @@ function handleMessageQueued(evt: any): void {
 
     // Record message count metric
     telemetryCounters.messagesReceived.add(1, {
-      "openclaw.message.channel": channel,
+      "request.channel": channel,
     });
 
     diagnosticsLogger.debug?.(`[otel] Root span started (message.queued) for session=${sessionKey}`);
@@ -352,16 +357,16 @@ function handleMessageQueued(evt: any): void {
 function handleMessageProcessed(evt: any): void {
   const sessionKey = evt?.sessionKey || "unknown";
   try {
-    const success = evt?.success !== false;
-    const errorMsg = evt?.error;
+    const success = evt?.outcome === "completed";
 
     const sessionCtx = sessionContextMap.get(sessionKey);
-
+    const totalMs = evt?.durationMs || 0;
     if (sessionCtx?.rootSpan) {
-      const totalMs = Date.now() - sessionCtx.startTime;
+      // const totalMs = Date.now() - sessionCtx.startTime;
       sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
 
-      if (errorMsg) {
+      if (!success) {
+        const errorMsg = evt?.error || "";
         sessionCtx.rootSpan.setAttribute("openclaw.request.error", String(errorMsg).slice(0, 500));
         sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(errorMsg).slice(0, 200) });
       } else {
@@ -375,8 +380,13 @@ function handleMessageProcessed(evt: any): void {
 
       sessionCtx.rootSpan.end();
 
+      
       diagnosticsLogger.debug?.(`[otel] Root span ended (message.processed) for session=${sessionKey}, duration=${totalMs}ms`);
     }
+    telemetryHistograms.messageDurationHistogram.record(totalMs * 1000.0, {
+        "success": String(success),
+        "request.channel": evt?.channel || "unknown",
+      });
 
     // Clean up
     sessionContextMap.delete(sessionKey);
