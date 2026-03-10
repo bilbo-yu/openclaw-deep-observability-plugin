@@ -200,7 +200,7 @@ export async function registerDiagnosticsListener(
     // Record LLM duration
     if (typeof evt.durationMs === "number") {
       // histograms.llmDuration.record(evt.durationMs, metricAttrs);
-      histograms.llmDurationHistogram.record(evt.durationMs * 1000.0, otelMetricAttrs);
+      histograms.llmDurationHistogram.record(evt.durationMs / 1000.0, otelMetricAttrs);
     }
 
     counters.llmRequests.add(1, metricAttrs);
@@ -383,7 +383,7 @@ function handleMessageProcessed(evt: any): void {
       
       diagnosticsLogger.debug?.(`[otel] Root span ended (message.processed) for session=${sessionKey}, duration=${totalMs}ms`);
     }
-    telemetryHistograms.messageDurationHistogram.record(totalMs * 1000.0, {
+    telemetryHistograms.messageDurationHistogram.record(totalMs / 1000.0, {
         "success": String(success),
         "request.channel": evt?.channel || "unknown",
         "request.target": "wss://",
