@@ -42,7 +42,21 @@ import { OTLPMetricExporter as OTLPMetricExporterGRPC } from "@opentelemetry/exp
 import type { OtelObservabilityConfig } from "./config.js";
 
 const _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS = [
-  0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92, 163.84, 327.68,
+  0.0,
+  5.0,
+  10.0,
+  25.0,
+  50.0,
+  75.0,
+  100.0,
+  250.0,
+  500.0,
+  750.0,
+  1000.0,
+  2500.0,
+  5000.0,
+  7500.0,
+  10000.0,
 ];
 // ── Types ───────────────────────────────────────────────────────────
 
