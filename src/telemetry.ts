@@ -6,35 +6,44 @@
  * standard OTel spans following the GenAI semantic conventions.
  */
 
-import { trace, metrics, context, SpanKind, SpanStatusCode } from "@opentelemetry/api";
-import type { Span, Tracer, Meter, Counter, Histogram, UpDownCounter } from "@opentelemetry/api";
+import {
+  trace,
+  metrics,
+  context,
+  SpanKind,
+  SpanStatusCode,
+} from "@opentelemetry/api";
+import type {
+  Span,
+  Tracer,
+  Meter,
+  Counter,
+  Histogram,
+  UpDownCounter,
+} from "@opentelemetry/api";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from "@opentelemetry/semantic-conventions";
 
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-node";
 import { OTLPTraceExporter as OTLPTraceExporterHTTP } from "@opentelemetry/exporter-trace-otlp-http";
 import { OTLPTraceExporter as OTLPTraceExporterGRPC } from "@opentelemetry/exporter-trace-otlp-grpc";
 
-import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+import {
+  MeterProvider,
+  PeriodicExportingMetricReader,
+} from "@opentelemetry/sdk-metrics";
 import { OTLPMetricExporter as OTLPMetricExporterHTTP } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPMetricExporter as OTLPMetricExporterGRPC } from "@opentelemetry/exporter-metrics-otlp-grpc";
 
 import type { OtelObservabilityConfig } from "./config.js";
 
 const _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS = [
-    0.32,
-    0.64,
-    1.28,
-    2.56,
-    5.12,
-    10.24,
-    20.48,
-    40.96,
-    81.92,
-    163.84,
-    327.68,
-]
+  0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92, 163.84, 327.68,
+];
 // ── Types ───────────────────────────────────────────────────────────
 
 export interface TelemetryRuntime {
@@ -99,7 +108,10 @@ export interface OtelGauges {
 
 // ── Init ────────────────────────────────────────────────────────────
 
-export function initTelemetry(config: OtelObservabilityConfig, logger: any): TelemetryRuntime {
+export function initTelemetry(
+  config: OtelObservabilityConfig,
+  logger: any,
+): TelemetryRuntime {
   const resourceAttrs: Record<string, string> = {
     [ATTR_SERVICE_NAME]: config.serviceName,
     [ATTR_SERVICE_VERSION]: "0.1.0",
@@ -127,8 +139,14 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
   if (config.traces) {
     const traceExporter =
       config.protocol === "grpc"
-        ? new OTLPTraceExporterGRPC({ url: traceEndpoint, headers: config.headers })
-        : new OTLPTraceExporterHTTP({ url: traceEndpoint, headers: config.headers });
+        ? new OTLPTraceExporterGRPC({
+            url: traceEndpoint,
+            headers: config.headers,
+          })
+        : new OTLPTraceExporterHTTP({
+            url: traceEndpoint,
+            headers: config.headers,
+          });
 
     // SDK v2: pass spanProcessors in constructor (addSpanProcessor was removed)
     tracerProvider = new NodeTracerProvider({
@@ -137,7 +155,9 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
     });
     tracerProvider.register();
 
-    logger.info(`[otel] Trace exporter → ${traceEndpoint} (${config.protocol})`);
+    logger.info(
+      `[otel] Trace exporter → ${traceEndpoint} (${config.protocol})`,
+    );
   }
 
   // ── Metrics ─────────────────────────────────────────────────────
@@ -147,8 +167,14 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
   if (config.metrics) {
     const metricExporter =
       config.protocol === "grpc"
-        ? new OTLPMetricExporterGRPC({ url: metricsEndpoint, headers: config.headers })
-        : new OTLPMetricExporterHTTP({ url: metricsEndpoint, headers: config.headers });
+        ? new OTLPMetricExporterGRPC({
+            url: metricsEndpoint,
+            headers: config.headers,
+          })
+        : new OTLPMetricExporterHTTP({
+            url: metricsEndpoint,
+            headers: config.headers,
+          });
 
     meterProvider = new MeterProvider({
       resource,
@@ -163,7 +189,9 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
     // Register as global meter provider so metrics.getMeter() returns a real meter
     metrics.setGlobalMeterProvider(meterProvider);
 
-    logger.info(`[otel] Metrics exporter → ${metricsEndpoint} (${config.protocol}, interval=${config.metricsIntervalMs}ms)`);
+    logger.info(
+      `[otel] Metrics exporter → ${metricsEndpoint} (${config.protocol}, interval=${config.metricsIntervalMs}ms)`,
+    );
   }
 
   // ── Instruments ─────────────────────────────────────────────────
@@ -204,9 +232,9 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
       description: "Total session resets",
       unit: "resets",
     }),
-    messagesReceived: meter.createCounter("gen_ai.agent.requests", {
-      description: "Total inbound agent requests",
-      unit: "requests",
+    messagesReceived: meter.createCounter("openclaw.messages.received", {
+      description: "Total inbound messages",
+      unit: "messages",
     }),
     // messagesSent: meter.createCounter("openclaw.messages.sent", {
     //   description: "Total outbound messages",
@@ -217,39 +245,53 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
       description: "Total security events detected",
       unit: "events",
     }),
-    sensitiveFileAccess: meter.createCounter("openclaw.security.sensitive_file_access", {
-      description: "Sensitive file access attempts",
-      unit: "events",
-    }),
+    sensitiveFileAccess: meter.createCounter(
+      "openclaw.security.sensitive_file_access",
+      {
+        description: "Sensitive file access attempts",
+        unit: "events",
+      },
+    ),
     promptInjection: meter.createCounter("openclaw.security.prompt_injection", {
       description: "Prompt injection attempts detected",
       unit: "events",
     }),
-    dangerousCommand: meter.createCounter("openclaw.security.dangerous_command", {
-      description: "Dangerous command executions detected",
-      unit: "events",
-    }),
+    dangerousCommand: meter.createCounter(
+      "openclaw.security.dangerous_command",
+      {
+        description: "Dangerous command executions detected",
+        unit: "events",
+      },
+    ),
   };
 
   const histograms: OtelHistograms = {
-    tokenHistogram: meter.createHistogram(
-        "gen_ai.client.token.usage",{
-          unit: "token",
-          description: "Measures number of input and output tokens used",
-        }
-    ),
+    tokenHistogram: meter.createHistogram("gen_ai.client.token.usage", {
+      unit: "token",
+      description: "Measures number of input and output tokens used",
+    }),
     llmDurationHistogram: meter.createHistogram(
-        "gen_ai.client.operation.duration",{
-          unit: "s",
-          description: "GenAI operation duration",
-          explicit_bucket_boundaries_advisory: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
-        }
+      "gen_ai.client.operation.duration",
+      {
+        unit: "s",
+        description: "GenAI operation duration",
+        advice: {
+          // 定义自定义桶边界：针对秒级延迟进行优化
+          explicitBucketBoundaries: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
+        },
+      },
     ),
-    messageDurationHistogram: meter.createHistogram("gen_ai.agent.request.duration", {
+    messageDurationHistogram: meter.createHistogram(
+      "gen_ai.agent.request.duration",
+      {
         unit: "s",
         description: "Agent request processing duration",
-        explicit_bucket_boundaries_advisory: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
-      }),
+        advice: {
+          // 定义自定义桶边界：针对秒级延迟进行优化
+          explicitBucketBoundaries: _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
+        },
+      },
+    ),
     // llmDuration: meter.createHistogram("openclaw.llm.duration", {
     //   description: "LLM request duration",
     //   unit: "ms",
@@ -312,7 +354,9 @@ export function initTelemetry(config: OtelObservabilityConfig, logger: any): Tel
       if (tracerProvider) await tracerProvider.shutdown();
       if (meterProvider) await meterProvider.shutdown();
     } catch (err) {
-      logger.error(`[otel] Shutdown error: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(
+        `[otel] Shutdown error: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   };
 
