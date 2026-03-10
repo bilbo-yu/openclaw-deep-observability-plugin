@@ -342,7 +342,7 @@ function handleMessageQueued(evt: any): void {
 
     // Record message count metric
     telemetryCounters.messagesReceived.add(1, {
-      "request.channel": channel,
+      "openclaw.message.channel": channel,
     });
 
     diagnosticsLogger.debug?.(`[otel] Root span started (message.queued) for session=${sessionKey}`);
@@ -386,6 +386,7 @@ function handleMessageProcessed(evt: any): void {
     telemetryHistograms.messageDurationHistogram.record(totalMs * 1000.0, {
         "success": String(success),
         "request.channel": evt?.channel || "unknown",
+        "request.target": "wss://",
       });
 
     // Clean up
