@@ -182,7 +182,57 @@ export function registerHooks(
   );
 
   logger.info("[otel] Registered before_agent_start hook (via api.on)");
+  api.on(
+    "after_tool_call",
+    (event: any, ctx: any) => {
+    try{
+        const toolName = event?.toolName || "unknown";
+        const params = event?.params;
+        const result = event?.result;
+        const error = event?.error;
+        const durationMs = event?.durationMs || 0;
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const agentId = ctx?.agentId || "unknown";
+        // Get parent context — prefer agent turn span, fall back to root
+        const sessionCtx = sessionContextMap.get(sessionKey);
+        const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
 
+        // Create tool span as child of agent turn
+        const span = tracer.startSpan(
+          `tool.${toolName}`,
+          {
+            kind: SpanKind.INTERNAL,
+            attributes: {
+              "gen_ai.tool.name": toolName,
+              "openclaw.session.key": sessionKey,
+              "openclaw.agent.id": agentId,
+            },
+            startTime: Date.now() - durationMs,
+          },
+          parentContext
+        );
+        if(params) {
+          span.setAttribute("gen_ai.tool.call.arguments",JSON.stringify(params).slice(0, 1000));
+        }
+        if(result) {
+          span.setAttribute("gen_ai.tool.call.result",JSON.stringify(result).slice(0, 1000));
+        }
+        if(error) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: `Tool error : ${error}` });
+        }else {
+          span.setStatus({ code: SpanStatusCode.OK });
+        }
+        span.end();
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      // Return undefined to keep the tool result unchanged
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered after_tool_call hook (via api.on)");
   // ── tool_result_persist ──────────────────────────────────────────
   // Creates a child span under the agent turn span for each tool call.
   // SYNCHRONOUS — must not return a Promise.

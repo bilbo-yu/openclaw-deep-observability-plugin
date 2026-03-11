@@ -377,7 +377,7 @@ function handleMessageProcessed(evt: any): void {
 
       // End agent span if it exists and is different from root
       if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
-        sessionCtx.agentSpan.end(sessionCtx.agentSpan || Date.now());
+        sessionCtx.agentSpan.end(sessionCtx.agentEndTime || Date.now());
       }
 
       sessionCtx.rootSpan.end();
