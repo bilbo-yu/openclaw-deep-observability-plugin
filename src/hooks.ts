@@ -131,6 +131,7 @@ export function registerHooks(
     "before_agent_start",
     (event: any, ctx: any) => {
       try {
+        logger.debug?.(`[otel] before_agent_start hook triggered: ${JSON.stringify(event)}`);
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
         const model = event?.model || "unknown";
@@ -358,11 +359,11 @@ export function registerHooks(
     "llm_input",
     (event: any, ctx: any) => {
       try {
-        logger.debug?.(`[otel] LLM input: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
         const runId = event?.runId;
         const sessionKey = ctx?.sessionKey || "unknown";
         const provider = event?.provider || "unknown";
         const model = event?.model || "unknown";
+        const prompt = event?.prompt || "";
         const startTime = Date.now();
 
         // Get parent context — prefer agent turn span, fall back to root
@@ -384,6 +385,12 @@ export function registerHooks(
           },
           parentContext
         );
+
+        // Set prompt attributes (user message)
+        if (prompt) {
+          span.setAttribute("gen_ai.prompt.0.role", "user");
+          span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 10000));
+        }
 
         // Store span in pendingLlmSpans for later ending in llm_output
         if (sessionCtx) {
@@ -411,7 +418,6 @@ export function registerHooks(
     "llm_output",
     (event: any, ctx: any) => {
       try {
-        logger.debug?.(`[otel] LLM output: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
         const runId = event?.runId;
         const sessionKey = ctx?.sessionKey || "unknown";
         const model = event?.model || "unknown";
@@ -427,23 +433,44 @@ export function registerHooks(
           // Set response model
           span.setAttribute("gen_ai.response.model", model);
 
+          // Set completion attributes (assistant response)
+          if (lastAssistant) {
+            const role = lastAssistant.role || "assistant";
+            span.setAttribute("gen_ai.completion.0.role", role);
+
+            // Extract content from lastAssistant
+            const contentArray = lastAssistant.content;
+            if (contentArray && Array.isArray(contentArray)) {
+              // Extract text parts from content array
+              const textParts = contentArray
+                .filter((c: any) => c.type === "text")
+                .map((c: any) => String(c.text || ""));
+              const content = textParts.join("\n");
+              if (content) {
+                span.setAttribute("gen_ai.completion.0.content", content.slice(0, 10000));
+              }
+            } else if (typeof lastAssistant.content === "string") {
+              span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 10000));
+            }
+          }
+
           // Extract usage from lastAssistant message
           const usage = lastAssistant?.usage;
           if (usage) {
             if (typeof usage.input === "number") {
-              span.setAttribute("gen_ai.usage.input_tokens", usage.input);
+              span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
             }
             if (typeof usage.output === "number") {
-              span.setAttribute("gen_ai.usage.output_tokens", usage.output);
+              span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
             }
             if (typeof usage.totalTokens === "number") {
-              span.setAttribute("gen_ai.usage.total_tokens", usage.totalTokens);
+              span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
             }
             if (typeof usage.cacheRead === "number") {
-              span.setAttribute("gen_ai.usage.cache_read_tokens", usage.cacheRead);
+              span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
             }
             if (typeof usage.cacheWrite === "number") {
-              span.setAttribute("gen_ai.usage.cache_write_tokens", usage.cacheWrite);
+              span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
             }
           }
 
@@ -495,6 +522,7 @@ export function registerHooks(
     "agent_end",
     async (event: any, ctx: any) => {
       try {
+        logger.debug?.(`[otel] agent_end event: ${JSON.stringify(event)}`);
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
         const durationMs = event?.durationMs;
