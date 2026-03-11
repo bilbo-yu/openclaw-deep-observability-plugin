@@ -180,12 +180,27 @@ export function registerHooks(
     },
     { priority: 90 }
   );
-
   logger.info("[otel] Registered before_agent_start hook (via api.on)");
+  api.on(
+    "before_tool_call",
+    (event: any, ctx: any) => {
+    try{
+      logger.debug?.(`[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+    } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      // Return undefined to keep the tool result unchanged
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered before_tool_call hook (via api.on)");
   api.on(
     "after_tool_call",
     (event: any, ctx: any) => {
     try{
+      logger.debug?.(`[otel] After Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
         const toolName = event?.toolName || "unknown";
         const params = event?.params;
         const result = event?.result;
@@ -212,10 +227,14 @@ export function registerHooks(
           parentContext
         );
         if(params) {
-          span.setAttribute("gen_ai.tool.call.arguments",JSON.stringify(params).slice(0, 1000));
+          const input = JSON.stringify(params).slice(0, 1000);
+          span.setAttribute("gen_ai.tool.call.arguments",input);
+          span.setAttribute("traceloop.entity.input", input);
         }
         if(result) {
-          span.setAttribute("gen_ai.tool.call.result",JSON.stringify(result).slice(0, 1000));
+          const output = JSON.stringify(result).slice(0, 1000);
+          span.setAttribute("gen_ai.tool.call.result",output);
+          span.setAttribute("traceloop.entity.output", output);
         }
         if(error) {
           span.setStatus({ code: SpanStatusCode.ERROR, message: `Tool error : ${error}` });
@@ -241,6 +260,7 @@ export function registerHooks(
     "tool_result_persist",
     (event: any, ctx: any) => {
       try {
+        logger.debug?.(`[otel] Tool result persist: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
         const toolName = event?.toolName || "unknown";
         const toolCallId = event?.toolCallId || "";
         const isSynthetic = event?.isSynthetic === true;
