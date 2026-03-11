@@ -215,7 +215,7 @@ export function registerHooks(
         // Record tool input
         if (params) {
           const input = JSON.stringify(params).slice(0, 1000);
-          span.setAttribute("gen_ai.tool.call.arguments", input);
+          // span.setAttribute("gen_ai.tool.call.arguments", input);
           span.setAttribute("traceloop.entity.input", input);
         }
 
@@ -256,6 +256,43 @@ export function registerHooks(
     { priority: -100 }
   );
   logger.info("[otel] Registered before_tool_call hook (via api.on)");
+
+  // ── llm_input ────────────────────────────────────────────────────
+  // Logs LLM input events for debugging.
+
+  api.on(
+    "llm_input",
+    (event: any, ctx: any) => {
+      try {
+        logger.debug?.(`[otel] LLM input: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_input hook (via api.on)");
+
+  // ── llm_output ───────────────────────────────────────────────────
+  // Logs LLM output events for debugging.
+
+  api.on(
+    "llm_output",
+    (event: any, ctx: any) => {
+      try {
+        logger.debug?.(`[otel] LLM output: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_output hook (via api.on)");
+
   // ── tool_result_persist ──────────────────────────────────────────
   // Ends the pending tool span created in before_tool_call.
   // SYNCHRONOUS — must not return a Promise.
@@ -303,7 +340,7 @@ export function registerHooks(
 
               // Record tool output
               const output = textParts.join("\n").slice(0, 1000);
-              span.setAttribute("gen_ai.tool.call.result", output);
+              // span.setAttribute("gen_ai.tool.call.result", output);
               span.setAttribute("traceloop.entity.output", output);
             }
           }
@@ -348,7 +385,7 @@ export function registerHooks(
   );
 
   logger.info("[otel] Registered tool_result_persist hook (via api.on)");
-
+  
   // ── agent_end ────────────────────────────────────────────────────
   // Ends the agent turn span AND the root request span.
   // Event shape from OpenClaw:
