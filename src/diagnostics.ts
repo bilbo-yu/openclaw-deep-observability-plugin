@@ -181,9 +181,11 @@ export async function registerDiagnosticsListener(
     }
     if (usage.cacheRead) {
       counters.tokensPrompt.add(usage.cacheRead, { ...metricAttrs, "token.type": "cache_read" });
+      histograms.tokenHistogram.record(usage.output, { ...otelMetricAttrs, "gen_ai.token.type": "cache_read" });
     }
     if (usage.cacheWrite) {
       counters.tokensPrompt.add(usage.cacheWrite, { ...metricAttrs, "token.type": "cache_write" });
+      histograms.tokenHistogram.record(usage.output, { ...otelMetricAttrs, "gen_ai.token.type": "cache_write" });
     }
     if (usage.total) {
       counters.tokensTotal.add(usage.total, metricAttrs);
@@ -215,7 +217,7 @@ export async function registerDiagnosticsListener(
       pendingUsageMap.delete(sessionKey);
     }
 
-  logger.debug?.(`[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, tokens=${usage.total || "?"}, usage=${JSON.stringify(usage) || "?"}`);
+  logger.debug?.(`[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, usage=${JSON.stringify(usage) || "?"}`);
   });
 
   logger.info("[otel] Subscribed to OpenClaw diagnostic events (model.usage, etc.)");
