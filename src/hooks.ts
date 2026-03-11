@@ -167,6 +167,7 @@ export function registerHooks(
             agentContext,
             startTime: Date.now(),
             pendingToolSpans: new Map(),
+            pendingLlmSpans: new Map(),
           });
         }
 
@@ -256,42 +257,6 @@ export function registerHooks(
     { priority: -100 }
   );
   logger.info("[otel] Registered before_tool_call hook (via api.on)");
-
-  // ── llm_input ────────────────────────────────────────────────────
-  // Logs LLM input events for debugging.
-
-  api.on(
-    "llm_input",
-    (event: any, ctx: any) => {
-      try {
-        logger.debug?.(`[otel] LLM input: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      return undefined;
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_input hook (via api.on)");
-
-  // ── llm_output ───────────────────────────────────────────────────
-  // Logs LLM output events for debugging.
-
-  api.on(
-    "llm_output",
-    (event: any, ctx: any) => {
-      try {
-        logger.debug?.(`[otel] LLM output: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      return undefined;
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_output hook (via api.on)");
 
   // ── tool_result_persist ──────────────────────────────────────────
   // Ends the pending tool span created in before_tool_call.
@@ -386,6 +351,139 @@ export function registerHooks(
 
   logger.info("[otel] Registered tool_result_persist hook (via api.on)");
   
+  // ── llm_input ────────────────────────────────────────────────────
+  // Creates an LLM span for tracking chat operations.
+
+  api.on(
+    "llm_input",
+    (event: any, ctx: any) => {
+      try {
+        logger.debug?.(`[otel] LLM input: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        const runId = event?.runId;
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const provider = event?.provider || "unknown";
+        const model = event?.model || "unknown";
+        const startTime = Date.now();
+
+        // Get parent context — prefer agent turn span, fall back to root
+        const sessionCtx = sessionContextMap.get(sessionKey);
+        const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
+
+        // Create LLM span with GenAI semantic conventions
+        const span = tracer.startSpan(
+          `chat ${model}`,
+          {
+            kind: SpanKind.CLIENT,
+            attributes: {
+              "gen_ai.system": provider,
+              "gen_ai.operation.name": "chat",
+              "gen_ai.request.model": model,
+              "openclaw.session.key": sessionKey,
+              "openclaw.run.id": runId,
+            },
+          },
+          parentContext
+        );
+
+        // Store span in pendingLlmSpans for later ending in llm_output
+        if (sessionCtx) {
+          if (!sessionCtx.pendingLlmSpans) {
+            sessionCtx.pendingLlmSpans = new Map();
+          }
+          sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
+        }
+
+        logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_input hook (via api.on)");
+
+  // ── llm_output ───────────────────────────────────────────────────
+  // Ends the pending LLM span created in llm_input.
+
+  api.on(
+    "llm_output",
+    (event: any, ctx: any) => {
+      try {
+        logger.debug?.(`[otel] LLM output: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        const runId = event?.runId;
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const model = event?.model || "unknown";
+        const lastAssistant = event?.lastAssistant;
+
+        // Get session context and pending LLM span
+        const sessionCtx = sessionContextMap.get(sessionKey);
+        const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
+
+        if (pendingLlmSpan) {
+          const { span, startTime } = pendingLlmSpan;
+
+          // Set response model
+          span.setAttribute("gen_ai.response.model", model);
+
+          // Extract usage from lastAssistant message
+          const usage = lastAssistant?.usage;
+          if (usage) {
+            if (typeof usage.input === "number") {
+              span.setAttribute("gen_ai.usage.input_tokens", usage.input);
+            }
+            if (typeof usage.output === "number") {
+              span.setAttribute("gen_ai.usage.output_tokens", usage.output);
+            }
+            if (typeof usage.totalTokens === "number") {
+              span.setAttribute("gen_ai.usage.total_tokens", usage.totalTokens);
+            }
+            if (typeof usage.cacheRead === "number") {
+              span.setAttribute("gen_ai.usage.cache_read_tokens", usage.cacheRead);
+            }
+            if (typeof usage.cacheWrite === "number") {
+              span.setAttribute("gen_ai.usage.cache_write_tokens", usage.cacheWrite);
+            }
+          }
+
+          // Set span status based on stopReason
+          const stopReason = lastAssistant?.stopReason;
+          if (stopReason === "stop" || stopReason === "end_turn") {
+            span.setStatus({ code: SpanStatusCode.OK });
+          } else if (stopReason) {
+            span.setStatus({ code: SpanStatusCode.OK });
+            span.setAttribute("gen_ai.response.stop_reason", stopReason);
+          } else {
+            span.setStatus({ code: SpanStatusCode.OK });
+          }
+
+          // Calculate duration
+          const durationMs = Date.now() - startTime;
+          span.setAttribute("openclaw.llm.duration_ms", durationMs);
+
+          // End the span
+          span.end();
+
+          // Remove from pendingLlmSpans
+          if (sessionCtx) {
+            sessionCtx.pendingLlmSpans.delete(runId);
+          }
+
+          logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
+        } else {
+          logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
+        }
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_output hook (via api.on)");
+
   // ── agent_end ────────────────────────────────────────────────────
   // Ends the agent turn span AND the root request span.
   // Event shape from OpenClaw:

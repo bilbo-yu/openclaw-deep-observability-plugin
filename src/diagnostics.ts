@@ -46,6 +46,12 @@ export interface PendingToolSpan {
   securityEvent?: SecurityEventResult | null;
 }
 
+/** Pending LLM span with start time for duration calculation */
+export interface PendingLlmSpan {
+  span: Span;
+  startTime: number;
+}
+
 /** Pending usage data waiting to be attached to spans */
 interface PendingUsageData {
   costUsd?: number;
@@ -80,6 +86,7 @@ export interface SessionTraceContext {
   startTime: number;
   agentEndTime?: number;
   pendingToolSpans: Map<string, PendingToolSpan>;
+  pendingLlmSpans: Map<string, PendingLlmSpan>;
 }
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
@@ -355,6 +362,7 @@ function handleMessageQueued(evt: any): void {
       rootContext,
       startTime: Date.now(),
       pendingToolSpans: new Map(),
+      pendingLlmSpans: new Map(),
     });
 
     // Record message count metric
