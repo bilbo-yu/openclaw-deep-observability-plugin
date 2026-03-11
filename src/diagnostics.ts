@@ -33,6 +33,19 @@ async function loadSdk(): Promise<void> {
   }
 }
 
+/** Security event type */
+interface SecurityEventResult {
+  detection: string;
+  description: string;
+}
+
+/** Pending tool span with start time for duration calculation */
+export interface PendingToolSpan {
+  span: Span;
+  startTime: number;
+  securityEvent?: SecurityEventResult | null;
+}
+
 /** Pending usage data waiting to be attached to spans */
 interface PendingUsageData {
   costUsd?: number;
@@ -66,6 +79,7 @@ export interface SessionTraceContext {
   agentContext?: Context;
   startTime: number;
   agentEndTime?: number;
+  pendingToolSpans: Map<string, PendingToolSpan>;
 }
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
@@ -340,6 +354,7 @@ function handleMessageQueued(evt: any): void {
       rootSpan,
       rootContext,
       startTime: Date.now(),
+      pendingToolSpans: new Map(),
     });
 
     // Record message count metric

@@ -166,6 +166,7 @@ export function registerHooks(
             agentSpan,
             agentContext,
             startTime: Date.now(),
+            pendingToolSpans: new Map(),
           });
         }
 
@@ -184,30 +185,15 @@ export function registerHooks(
   api.on(
     "before_tool_call",
     (event: any, ctx: any) => {
-    try{
-      logger.debug?.(`[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
-    } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      // Return undefined to keep the tool result unchanged
-      return undefined;
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered before_tool_call hook (via api.on)");
-  api.on(
-    "after_tool_call",
-    (event: any, ctx: any) => {
-    try{
-      logger.debug?.(`[otel] After Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+      try {
+        logger.debug?.(`[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        
         const toolName = event?.toolName || "unknown";
         const params = event?.params;
-        const result = event?.result;
-        const error = event?.error;
-        const durationMs = event?.durationMs || 0;
         const sessionKey = ctx?.sessionKey || "unknown";
         const agentId = ctx?.agentId || "unknown";
+        const startTime = Date.now();
+
         // Get parent context — prefer agent turn span, fall back to root
         const sessionCtx = sessionContextMap.get(sessionKey);
         const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
@@ -222,26 +208,44 @@ export function registerHooks(
               "openclaw.session.key": sessionKey,
               "openclaw.agent.id": agentId,
             },
-            startTime: Date.now() - durationMs,
           },
           parentContext
         );
-        if(params) {
+
+        // Record tool input
+        if (params) {
           const input = JSON.stringify(params).slice(0, 1000);
-          span.setAttribute("gen_ai.tool.call.arguments",input);
+          span.setAttribute("gen_ai.tool.call.arguments", input);
           span.setAttribute("traceloop.entity.input", input);
         }
-        if(result) {
-          const output = JSON.stringify(result).slice(0, 1000);
-          span.setAttribute("gen_ai.tool.call.result",output);
-          span.setAttribute("traceloop.entity.output", output);
+
+        // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
+        logger.debug?.(`[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(params)}`);
+        const securityEvent = checkToolSecurity(
+          toolName,
+          params || {},
+          span,
+          securityCounters,
+          sessionKey,
+          agentId
+        );
+        if (securityEvent) {
+          logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
+          // Add tool input details to span for forensics
+          if (params) {
+            const inputStr = JSON.stringify(params).slice(0, 1000);
+            span.setAttribute("openclaw.tool.input_preview", inputStr);
+          }
+          // Record security event on span
+          span.setAttribute("openclaw.security.event", JSON.stringify(securityEvent));
         }
-        if(error) {
-          span.setStatus({ code: SpanStatusCode.ERROR, message: `Tool error : ${error}` });
-        }else {
-          span.setStatus({ code: SpanStatusCode.OK });
+
+        // Store span in pendingToolSpans for later ending in tool_result_persist
+        if (sessionCtx) {
+          sessionCtx.pendingToolSpans.set(toolName, { span, startTime, securityEvent });
         }
-        span.end();
+
+        logger.debug?.(`[otel] Tool span started: tool=${toolName}, session=${sessionKey}`);
       } catch {
         // Never let telemetry errors break the main flow
       }
@@ -251,9 +255,9 @@ export function registerHooks(
     },
     { priority: -100 }
   );
-  logger.info("[otel] Registered after_tool_call hook (via api.on)");
+  logger.info("[otel] Registered before_tool_call hook (via api.on)");
   // ── tool_result_persist ──────────────────────────────────────────
-  // Creates a child span under the agent turn span for each tool call.
+  // Ends the pending tool span created in before_tool_call.
   // SYNCHRONOUS — must not return a Promise.
 
   api.on(
@@ -265,10 +269,6 @@ export function registerHooks(
         const toolCallId = event?.toolCallId || "";
         const isSynthetic = event?.isSynthetic === true;
         const sessionKey = ctx?.sessionKey || "unknown";
-        const agentId = ctx?.agentId || "unknown";
-
-        // Tool input is available in event.input for security checks
-        const toolInput = event?.input || event?.toolInput || event?.args || {};
 
         // Record metric
         counters.toolCalls.add(1, {
@@ -276,69 +276,67 @@ export function registerHooks(
           "session.key": sessionKey,
         });
 
-        // Get parent context — prefer agent turn span, fall back to root
+        // Get session context and pending tool span
         const sessionCtx = sessionContextMap.get(sessionKey);
-        const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
+        const pendingToolSpan = sessionCtx?.pendingToolSpans?.get(toolName);
 
-        // Create tool span as child of agent turn
-        const span = tracer.startSpan(
-          `tool.${toolName}`,
-          {
-            kind: SpanKind.INTERNAL,
-            attributes: {
-              "openclaw.tool.name": toolName,
-              "openclaw.tool.call_id": toolCallId,
-              "openclaw.tool.is_synthetic": isSynthetic,
-              "openclaw.session.key": sessionKey,
-              "openclaw.agent.id": agentId,
-            },
-          },
-          parentContext
-        );
+        if (pendingToolSpan) {
+          const { span, startTime, securityEvent } = pendingToolSpan;
 
-        // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
-        const securityEvent = checkToolSecurity(
-          toolName,
-          toolInput,
-          span,
-          securityCounters,
-          sessionKey,
-          agentId
-        );
-        if (securityEvent) {
-          logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
-          // Add tool input details to span for forensics
-          if (toolInput) {
-            const inputStr = JSON.stringify(toolInput).slice(0, 1000);
-            span.setAttribute("openclaw.tool.input_preview", inputStr);
-          }
-        }
+          // Add additional attributes
+          span.setAttribute("openclaw.tool.call_id", toolCallId);
+          span.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
 
-        // Inspect the message for result metadata
-        const message = event?.message;
-        if (message) {
-          const contentArray = message?.content;
-          if (contentArray && Array.isArray(contentArray)) {
-            const textParts = contentArray
-              .filter((c: any) => c.type === "text")
-              .map((c: any) => String(c.text || ""));
-            const totalChars = textParts.reduce((sum: number, t: string) => sum + t.length, 0);
-            span.setAttribute("openclaw.tool.result_chars", totalChars);
-            span.setAttribute("openclaw.tool.result_parts", contentArray.length);
+          // Inspect the message for result metadata
+          const message = event?.message;
+          if (message) {
+            const contentArray = message?.content;
+            if (contentArray && Array.isArray(contentArray)) {
+              const textParts = contentArray
+                .filter((c: any) => c.type === "text")
+                .map((c: any) => String(c.text || ""));
+              const totalChars = textParts.reduce((sum: number, t: string) => sum + t.length, 0);
+              
+              // Record result_chars and result_parts
+              span.setAttribute("openclaw.tool.result_chars", totalChars);
+              span.setAttribute("openclaw.tool.result_parts", contentArray.length);
+
+              // Record tool output
+              const output = textParts.join("\n").slice(0, 1000);
+              span.setAttribute("gen_ai.tool.call.result", output);
+              span.setAttribute("traceloop.entity.output", output);
+            }
           }
 
-          if (message?.is_error === true || message?.isError === true) {
+          // Set status based on isError or securityEvent (unified logic)
+          const isToolError = message?.is_error === true || message?.isError === true;
+          if (isToolError) {
             counters.toolErrors.add(1, { "tool.name": toolName });
             span.setStatus({ code: SpanStatusCode.ERROR, message: "Tool execution error" });
-          } else if (!securityEvent) {
-            // Only set OK status if no security event
+          } else if (securityEvent) {
+            span.setStatus({ code: SpanStatusCode.ERROR, message: `Security warning detected: ${securityEvent.detection}` });
+          } else {
             span.setStatus({ code: SpanStatusCode.OK });
           }
-        } else if (!securityEvent) {
-          span.setStatus({ code: SpanStatusCode.OK });
-        }
 
-        span.end();
+          // End span with correct timestamp
+          const durationMs = message?.details?.durationMs;
+          if (typeof durationMs === "number") {
+            span.setAttribute("openclaw.tool.duration_ms", durationMs);
+            span.end(startTime + durationMs);
+          } else {
+            span.end();
+          }
+
+          // Remove from pendingToolSpans
+          if (sessionCtx) {
+            sessionCtx.pendingToolSpans.delete(toolName);
+          }
+
+          logger.debug?.(`[otel] Tool span ended: tool=${toolName}, session=${sessionKey}`);
+        } else {
+          logger.debug?.(`[otel] No pending tool span found for tool=${toolName}, session=${sessionKey}`);
+        }
       } catch {
         // Never let telemetry errors break the main flow
       }
