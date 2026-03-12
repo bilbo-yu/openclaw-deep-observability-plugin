@@ -90,7 +90,6 @@ export interface SessionTraceContext {
   agentSpan?: Span;
   agentContext?: Context;
   startTime: number;
-  agentEndTime?: number;
   pendingToolSpans: Map<string, PendingToolSpan>;
   toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
@@ -350,6 +349,7 @@ function handleMessageQueued(evt: any): void {
         "openclaw.message.from": from,
       },
     });
+    rootSpan.setAttribute("traceloop.entity.input", messageText || "");
 
     // ═══ SECURITY DETECTION: Prompt Injection ═════════════
     if (messageText && typeof messageText === "string" && messageText.length > 0 && securityCounters) {
@@ -410,7 +410,7 @@ function handleMessageProcessed(evt: any): void {
       }
 
       // End agent span if it exists and is different from root and hasn't ended yet
-      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan && !sessionCtx.agentEndTime) {
+      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
         sessionCtx.agentSpan.end();
       }
 
