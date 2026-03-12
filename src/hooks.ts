@@ -338,10 +338,14 @@ export function registerHooks(
           code: SpanStatusCode.ERROR,
           message: "Tool execution error",
         });
-      } else if (securityEvent) {
+      } else if (
+        securityEvent &&
+        (securityEvent.severity === "critical" ||
+          securityEvent.severity === "high")
+      ) {
         toolSpan.setStatus({
           code: SpanStatusCode.ERROR,
-          message: `Security event detected: ${securityEvent.detection}`,
+          message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
         });
       } else {
         toolSpan.setStatus({ code: SpanStatusCode.OK });
@@ -447,16 +451,16 @@ export function registerHooks(
         if (provider) {
           tokenUsage.provider = provider;
         }
-        if (Array.isArray(msg?.content)) {
-          for (const item of msg.content) {
-            if (item?.type === "toolCall" && item?.id) {
-              sessionCtx.toolCalls.set(item.id, {
-                name: item.name || "unknown",
-                arguments: item.arguments || {},
-              });
-            }
-          }
-        }
+        // if (Array.isArray(msg?.content)) {
+        //   for (const item of msg.content) {
+        //     if (item?.type === "toolCall" && item?.id) {
+        //       sessionCtx.toolCalls.set(item.id, {
+        //         name: item.name || "unknown",
+        //         arguments: item.arguments || {},
+        //       });
+        //     }
+        //   }
+        // }
       } else if (msg?.role === "toolResult") {
         // 这里计算的tool span的耗时不如通过tool相关hook算的准，所以暂时用hook来创建tool span
         // createToolSpanFromMessage(
@@ -577,7 +581,7 @@ export function registerHooks(
             agentContext,
             startTime: Date.now(),
             pendingToolSpans: new Map(),
-            toolCalls: new Map(),
+            // toolCalls: new Map(),
             startMessagesLength: event?.messages?.length || 0,
           });
         }
@@ -737,10 +741,14 @@ export function registerHooks(
               code: SpanStatusCode.ERROR,
               message: "Tool execution error",
             });
-          } else if (securityEvent) {
+          } else if (
+            securityEvent &&
+            (securityEvent.severity === "critical" ||
+              securityEvent.severity === "high")
+          ) {
             span.setStatus({
               code: SpanStatusCode.ERROR,
-              message: `Security warning detected: ${securityEvent.detection}`,
+              message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
             });
           } else {
             span.setStatus({ code: SpanStatusCode.OK });
@@ -1045,19 +1053,17 @@ export function registerHooks(
           const output = lastMsg.role === "assistant" ? lastMsg.content : {};
           const inputInfo = parseContent(input);
           const outputInfo = parseContent(output);
-          agentSpan.setAttribute(
-            "traceloop.entity.input",
-            inputInfo.content || "",
-          );
-          agentSpan.setAttribute(
-            "traceloop.entity.output",
-            outputInfo.content || "",
-          );
-          if (!sessionCtx.messageInput && inputInfo.content) {
-            sessionCtx.messageInput = inputInfo.content;
-            const securityEvent = checkMessageSecurity(
+
+          let securityEvent = null;
+          if (inputInfo.content) {
+            agentSpan.setAttribute("traceloop.entity.input", inputInfo.content);
+            if (!sessionCtx.messageInput) {
+              //use the first user message as root span input
+              sessionCtx.messageInput = inputInfo.content;
+            }
+            securityEvent = checkMessageSecurity(
               inputInfo.content,
-              sessionCtx.rootSpan,
+              agentSpan,
               securityCounters,
               sessionKey,
             );
@@ -1067,7 +1073,14 @@ export function registerHooks(
               );
             }
           }
-          sessionCtx.messageOutput = outputInfo.content || "";
+          if (outputInfo.content) {
+            agentSpan.setAttribute(
+              "traceloop.entity.output",
+              outputInfo.content,
+            );
+            sessionCtx.messageOutput = outputInfo.content;
+          }
+
           // Create LLM spans and tool spans for new messages in this conversation
           const {
             inputTokens = 0,
@@ -1131,6 +1144,15 @@ export function registerHooks(
             agentSpan.setStatus({
               code: SpanStatusCode.ERROR,
               message: String(errorMsg).slice(0, 200),
+            });
+          } else if (
+            securityEvent &&
+            (securityEvent.severity === "critical" ||
+              securityEvent.severity === "high")
+          ) {
+            agentSpan.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
             });
           } else {
             agentSpan.setStatus({ code: SpanStatusCode.OK });
