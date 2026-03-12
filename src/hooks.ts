@@ -70,35 +70,34 @@ interface ContentInfo {
   content: string | undefined;
 }
 function parseContent(contentArray: any): ContentInfo {
-    if (contentArray && Array.isArray(contentArray)) {
-      const textParts = contentArray
-        .filter((c: any) => c.type === "text")
-        .map((c: any) => String(c.text || ""));
-      const totalChars = textParts.reduce(
-        (sum: number, t: string) => sum + t.length,
-        0,
-      );
-      // Record tool output
-      const output = textParts.join("\n").slice(0, 2048);
-      return {
-        totalChars: totalChars,
-        totalParts: contentArray.length,
-        content: output,
-      }
-    } else if (typeof contentArray === "string") {
-
-      return {
-        totalChars: contentArray.length,
-        totalParts: 1,
-        content: contentArray.slice(0, 2048),
-      }
-    } else {
-      return {
-        totalChars: 0,
-        totalParts: 0,
-        content: undefined,
-      }
-    }
+  if (contentArray && Array.isArray(contentArray)) {
+    const textParts = contentArray
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => String(c.text || ""));
+    const totalChars = textParts.reduce(
+      (sum: number, t: string) => sum + t.length,
+      0,
+    );
+    // Record tool output
+    const output = textParts.join("\n").slice(0, 2048);
+    return {
+      totalChars: totalChars,
+      totalParts: contentArray.length,
+      content: output,
+    };
+  } else if (typeof contentArray === "string") {
+    return {
+      totalChars: contentArray.length,
+      totalParts: 1,
+      content: contentArray.slice(0, 2048),
+    };
+  } else {
+    return {
+      totalChars: 0,
+      totalParts: 0,
+      content: undefined,
+    };
+  }
 }
 /**
  * Register all plugin hooks on the OpenClaw plugin API.
@@ -158,7 +157,6 @@ export function registerHooks(
       if (prevMsg?.role === "user") {
         inputText = JSON.stringify(prevMsg?.content).slice(0, 2048);
       }
-
 
       // Get model and provider from message
       const msgModel = msg.model || "unknown";
@@ -327,14 +325,12 @@ export function registerHooks(
 
       // Set tool output from content
       const contentArray = msg.content;
-      const { totalChars, totalParts: resultParts, content: output} = parseContent(contentArray)
-      
-      toolSpan.setAttribute(
-        "traceloop.entity.output",
-        output,
-      );
+      const { totalChars, totalParts, content } = parseContent(contentArray);
+      if (content) {
+        toolSpan.setAttribute("traceloop.entity.output", content);
+      }
       toolSpan.setAttribute("openclaw.tool.result_chars", totalChars);
-      toolSpan.setAttribute("openclaw.tool.result_parts", resultParts);
+      toolSpan.setAttribute("openclaw.tool.result_parts", totalParts);
 
       // Set status based on isError or securityEvent (unified logic)
       if (isError) {
@@ -424,7 +420,6 @@ export function registerHooks(
       }
 
       if (msg?.role === "assistant") {
-
         const {
           inputTokens = 0,
           outputTokens = 0,
@@ -456,9 +451,9 @@ export function registerHooks(
           for (const item of msg.content) {
             if (item?.type === "toolCall" && item?.id) {
               sessionCtx.toolCalls.set(item.id, {
-                  name: item.name || "unknown",
-                  arguments: item.arguments || {},
-                });
+                name: item.name || "unknown",
+                arguments: item.arguments || {},
+              });
             }
           }
         }
@@ -637,8 +632,8 @@ export function registerHooks(
 
         // Record tool input
         if (params) {
-          if (params.content){
-            params.content = "***"
+          if (params.content) {
+            params.content = "***";
           }
           const input = JSON.stringify(params).slice(0, 1000);
           span.setAttribute("traceloop.entity.input", input);
@@ -722,15 +717,15 @@ export function registerHooks(
           const message = event?.message;
           if (message) {
             const contentArray = message?.content;
-            const { totalChars, totalParts: resultParts, content: output} = parseContent(contentArray)
+            const { totalChars, totalParts, content } =
+              parseContent(contentArray);
             // Record result_chars and result_parts
             span.setAttribute("openclaw.tool.result_chars", totalChars);
-            span.setAttribute(
-              "openclaw.tool.result_parts",
-              resultParts,
-            );
+            span.setAttribute("openclaw.tool.result_parts", totalParts);
             // Record tool output
-            span.setAttribute("traceloop.entity.output", output);
+            if (content) {
+              span.setAttribute("traceloop.entity.output", content);
+            }
           }
 
           // Set status based on isError or securityEvent (unified logic)
@@ -955,7 +950,9 @@ export function registerHooks(
     "agent_end",
     async (event: any, ctx: any) => {
       try {
-        logger.debug?.(`[otel] agent_end event: ${JSON.stringify(event)}, ctx: ${JSON.stringify(ctx)}`);
+        logger.debug?.(
+          `[otel] agent_end event: ${JSON.stringify(event)}, ctx: ${JSON.stringify(ctx)}`,
+        );
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
         const durationMs = event?.durationMs;
@@ -1015,7 +1012,6 @@ export function registerHooks(
         if (sessionCtx?.agentSpan) {
           const agentSpan = sessionCtx.agentSpan;
 
-
           // Token usage — GenAI semantic convention attributes
           // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
           // agentSpan.setAttribute("gen_ai.usage.output_tokens", totalOutputTokens);
@@ -1049,10 +1045,27 @@ export function registerHooks(
           const output = lastMsg.role === "assistant" ? lastMsg.content : {};
           const inputInfo = parseContent(input);
           const outputInfo = parseContent(output);
-          agentSpan.setAttribute("traceloop.entity.input", inputInfo.content || "");
-          agentSpan.setAttribute("traceloop.entity.output", outputInfo.content || "");
-          if(!sessionCtx.messageInput) {
+          agentSpan.setAttribute(
+            "traceloop.entity.input",
+            inputInfo.content || "",
+          );
+          agentSpan.setAttribute(
+            "traceloop.entity.output",
+            outputInfo.content || "",
+          );
+          if (!sessionCtx.messageInput && inputInfo.content) {
             sessionCtx.messageInput = inputInfo.content;
+            const securityEvent = checkMessageSecurity(
+              inputInfo.content,
+              sessionCtx.rootSpan,
+              securityCounters,
+              sessionKey,
+            );
+            if (securityEvent) {
+              logger.warn?.(
+                `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`,
+              );
+            }
           }
           sessionCtx.messageOutput = outputInfo.content || "";
           // Create LLM spans and tool spans for new messages in this conversation
