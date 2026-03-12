@@ -67,7 +67,7 @@ class TokenUsage {
 interface ContentInfo {
   totalChars: number;
   totalParts: number;
-  content: string;
+  content: string | undefined;
 }
 function parseContent(contentArray: any): ContentInfo {
     if (contentArray && Array.isArray(contentArray)) {
@@ -96,7 +96,7 @@ function parseContent(contentArray: any): ContentInfo {
       return {
         totalChars: 0,
         totalParts: 0,
-        content: "",
+        content: undefined,
       }
     }
 }
@@ -628,7 +628,7 @@ export function registerHooks(
             kind: SpanKind.INTERNAL,
             attributes: {
               "gen_ai.tool.name": toolName,
-              "gen_ai.conversation.id": sessionKey,
+              "openclaw.session.key": sessionKey,
               "openclaw.agent.id": agentId,
             },
           },
@@ -637,8 +637,10 @@ export function registerHooks(
 
         // Record tool input
         if (params) {
+          if (params.content){
+            params.content = "***"
+          }
           const input = JSON.stringify(params).slice(0, 1000);
-          // span.setAttribute("gen_ai.tool.call.arguments", input);
           span.setAttribute("traceloop.entity.input", input);
         }
 
@@ -657,16 +659,6 @@ export function registerHooks(
         if (securityEvent) {
           logger.warn?.(
             `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`,
-          );
-          // Add tool input details to span for forensics
-          if (params) {
-            const inputStr = JSON.stringify(params).slice(0, 1000);
-            span.setAttribute("openclaw.tool.input_preview", inputStr);
-          }
-          // Record security event on span
-          span.setAttribute(
-            "openclaw.security.event",
-            JSON.stringify(securityEvent),
           );
         }
 
@@ -1057,8 +1049,12 @@ export function registerHooks(
           const output = lastMsg.role === "assistant" ? lastMsg.content : {};
           const inputInfo = parseContent(input);
           const outputInfo = parseContent(output);
-          agentSpan.setAttribute("traceloop.entity.input", inputInfo.content);
-          agentSpan.setAttribute("traceloop.entity.output", outputInfo.content);
+          agentSpan.setAttribute("traceloop.entity.input", inputInfo.content || "");
+          agentSpan.setAttribute("traceloop.entity.output", outputInfo.content || "");
+          if(!sessionCtx.messageInput) {
+            sessionCtx.messageInput = inputInfo.content;
+          }
+          sessionCtx.messageOutput = outputInfo.content || "";
           // Create LLM spans and tool spans for new messages in this conversation
           const {
             inputTokens = 0,

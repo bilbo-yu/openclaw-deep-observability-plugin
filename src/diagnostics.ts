@@ -90,6 +90,8 @@ export interface SessionTraceContext {
   agentSpan?: Span;
   agentContext?: Context;
   startTime: number;
+  messageInput?: string;
+  messageOutput?: string;
   pendingToolSpans: Map<string, PendingToolSpan>;
   toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
@@ -336,7 +338,8 @@ function handleMessageQueued(evt: any): void {
   try {
     const channel = evt?.channel || "unknown";
     const sessionKey = evt?.sessionKey || "unknown";
-    const from = evt?.from || evt?.senderId || "unknown";
+    const sessionId = evt?.sessionId || sessionKey;
+    const source = evt?.source || "unknown";
     const messageText = evt?.text || evt?.message || "";
 
     // Create root span for this request
@@ -345,11 +348,12 @@ function handleMessageQueued(evt: any): void {
       attributes: {
         "openclaw.message.channel": channel,
         "openclaw.session.key": sessionKey,
+        "gen_ai.conversation.id": sessionId,
         "openclaw.message.direction": "inbound",
-        "openclaw.message.from": from,
+        "openclaw.message.source": source,
       },
     });
-    rootSpan.setAttribute("traceloop.entity.input", messageText || "");
+    
 
     // ═══ SECURITY DETECTION: Prompt Injection ═════════════
     if (messageText && typeof messageText === "string" && messageText.length > 0 && securityCounters) {
@@ -412,6 +416,13 @@ function handleMessageProcessed(evt: any): void {
       // End agent span if it exists and is different from root and hasn't ended yet
       if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
         sessionCtx.agentSpan.end();
+      }
+
+      if (sessionCtx.messageInput) {
+        sessionCtx.rootSpan.setAttribute("traceloop.entity.input", sessionCtx.messageInput);
+      }
+      if (sessionCtx.messageOutput) {
+        sessionCtx.rootSpan.setAttribute("traceloop.entity.output", sessionCtx.messageOutput);
       }
 
       sessionCtx.rootSpan.end();
