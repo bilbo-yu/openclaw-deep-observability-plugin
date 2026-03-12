@@ -963,12 +963,12 @@ export function registerHooks(
         const durationMs = event?.durationMs;
         const success = event?.success !== false;
         const errorMsg = event?.error;
+        const messages: any[] = event?.messages || [];
 
         // Try to get usage from diagnostic events (includes cost!)
         // const diagUsage = getPendingUsage(sessionKey);
 
         // Fallback: Extract token usage from the messages array
-        const messages: any[] = event?.messages || [];
         // let totalInputTokens = 0;
         // let totalOutputTokens = 0;
         // let cacheReadTokens = 0;
@@ -1017,9 +1017,6 @@ export function registerHooks(
         if (sessionCtx?.agentSpan) {
           const agentSpan = sessionCtx.agentSpan;
 
-          if (typeof durationMs === "number") {
-            agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
-          }
 
           // Token usage — GenAI semantic convention attributes
           // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
@@ -1096,6 +1093,7 @@ export function registerHooks(
 
           // Record duration histogram
           if (typeof durationMs === "number") {
+            agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
             histograms.agentTurnDuration.record(durationMs, {
               "gen_ai.response.model": model || "unknown",
               "openclaw.agent.id": agentId,
@@ -1116,7 +1114,7 @@ export function registerHooks(
           }
 
           sessionCtx.agentEndTime = Date.now();
-          // agentSpan.end();
+          agentSpan.end();
         }
 
         // End the root request span
