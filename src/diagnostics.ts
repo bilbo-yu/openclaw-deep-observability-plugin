@@ -46,6 +46,13 @@ export interface PendingToolSpan {
   securityEvent?: SecurityEventResult | null;
 }
 
+export interface ToolCallInfo {
+  name: string;
+  startTime: number;
+  arguments?: any;
+}
+
+
 /** Pending LLM span with start time for duration calculation */
 export interface PendingLlmSpan {
   span: Span;
@@ -86,6 +93,7 @@ export interface SessionTraceContext {
   startTime: number;
   agentEndTime?: number;
   pendingToolSpans: Map<string, PendingToolSpan>;
+  toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
   startMessagesLength?: number;
 }
@@ -262,26 +270,27 @@ export function getPendingUsage(sessionKey: string): PendingUsageData | undefine
  * Enrich a span with usage data from diagnostic event.
  */
 export function enrichSpanWithUsage(span: Span, data: PendingUsageData): void {
-  diagnosticsLogger.debug?.(`[otel] enrichSpanWithUsage: usage=${JSON.stringify(data?.usage) || "?"}`);
   const usage = data.usage || {};
-
+  let totalTokens = 0;
   // GenAI semantic convention attributes
   if (usage.input !== undefined) {
+    totalTokens += usage.input;
     span.setAttribute("gen_ai.usage.input_tokens", usage.input);
   }
   if (usage.output !== undefined) {
+    totalTokens += usage.output;
     span.setAttribute("gen_ai.usage.output_tokens", usage.output);
   }
-  if (usage.total !== undefined) {
-    span.setAttribute("gen_ai.usage.total_tokens", usage.total);
-  }
   if (usage.cacheRead !== undefined) {
+    totalTokens += usage.cacheRead;
     span.setAttribute("gen_ai.usage.cache_read_tokens", usage.cacheRead);
   }
   if (usage.cacheWrite !== undefined) {
+    totalTokens += usage.cacheWrite;
     span.setAttribute("gen_ai.usage.cache_write_tokens", usage.cacheWrite);
   }
 
+  span.setAttribute("gen_ai.usage.total_tokens", totalTokens);
   // Cost (custom attribute — not in GenAI semconv yet)
   if (data.costUsd !== undefined) {
     span.setAttribute("openclaw.llm.cost_usd", data.costUsd);
@@ -302,6 +311,7 @@ export function enrichSpanWithUsage(span: Span, data: PendingUsageData): void {
   if (data.model) {
     span.setAttribute("gen_ai.response.model", data.model);
   }
+  diagnosticsLogger.debug?.(`[otel] enrichSpanWithUsage: usage=${JSON.stringify(data?.usage) || "?"}, calc total=${totalTokens}`);
 }
 
 /**
