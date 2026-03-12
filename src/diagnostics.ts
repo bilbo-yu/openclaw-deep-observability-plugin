@@ -86,7 +86,8 @@ export interface SessionTraceContext {
   startTime: number;
   agentEndTime?: number;
   pendingToolSpans: Map<string, PendingToolSpan>;
-  pendingLlmSpans: Map<string, PendingLlmSpan>;
+  // pendingLlmSpans: Map<string, PendingLlmSpan>;
+  startMessagesLength?: number;
 }
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
@@ -362,7 +363,7 @@ function handleMessageQueued(evt: any): void {
       rootContext,
       startTime: Date.now(),
       pendingToolSpans: new Map(),
-      pendingLlmSpans: new Map(),
+      // pendingLlmSpans: new Map(),
     });
 
     // Record message count metric

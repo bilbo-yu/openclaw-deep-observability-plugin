@@ -22,11 +22,12 @@
  *   - api.on()           → typed plugin hooks (tool_result_persist, agent_end)
  */
 
-import { SpanKind, SpanStatusCode, context, trace, type Span, type Context } from "@opentelemetry/api";
+import { SpanKind, SpanStatusCode, context, trace, type Context } from "@opentelemetry/api";
 import type { TelemetryRuntime } from "./telemetry.js";
 import type { OtelObservabilityConfig } from "./config.js";
-import { sessionContextMap, getPendingUsage, enrichSpanWithUsage, hasDiagnosticsSupport } from "./diagnostics.js";
+import { sessionContextMap, getPendingUsage,  type SessionTraceContext } from "./diagnostics.js";
 import { checkToolSecurity, checkMessageSecurity, type SecurityCounters } from "./security.js";
+
 
 /** Active trace context for a session — allows connecting spans into one trace. */
 // interface SessionTraceContext {
@@ -66,7 +67,283 @@ export function registerHooks(
     promptInjection: counters.promptInjection,
     dangerousCommand: counters.dangerousCommand,
   };
+  
+  /**
+   * Create an LLM span from an assistant message.
+   * 
+   * @param messages - Full messages array
+   * @param msgIndex - Index of the message in the array
+   * @param parentContext - Parent context for the span
+   * @param sessionKey - Session key for logging
+   * @param agentStartTime - Agent start time for fallback timing
+   */
+  function createLlmSpanFromMessage(
+    messages: any[],
+    msgIndex: number,
+    parentContext: Context,
+    sessionKey: string,
+    agentStartTime: number
+  ): void {
+    try {
+      const msg = messages[msgIndex];
+      // Calculate span start time
+      let spanStartTime: number;
+      // LLM input
+      let inputText;
+      if (msgIndex === 0) {
+        // No previous message, use agent start time
+        spanStartTime = agentStartTime;
+      } else {
+        // Use previous message's timestamp
+        const prevMsg = messages[msgIndex - 1];
+        spanStartTime = prevMsg?.timestamp || agentStartTime;
+        if (prevMsg && prevMsg?.role === "user") {
+          inputText = JSON.stringify(prevMsg?.content).slice(0, 1000);
+        }
+      }
 
+      // End time is current message's timestamp
+      const spanEndTime = msg.timestamp || Date.now();
+
+      // Get model and provider from message
+      const msgModel = msg.model || "unknown";
+      const msgProvider = msg.provider || "unknown";
+
+      // Create LLM span with correct start time, using agentSpan as parent
+      const llmSpan = tracer.startSpan(
+        `chat ${msgModel}`,
+        {
+          kind: SpanKind.CLIENT,
+          startTime: spanStartTime,
+          attributes: {
+            "gen_ai.system": msgProvider,
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": msgModel,
+            "gen_ai.response.model": msgModel,
+            "openclaw.session.key": sessionKey,
+          },
+        },
+        parentContext
+      );
+      if (inputText) {
+        llmSpan.setAttribute("traceloop.entity.input", inputText);
+      }
+      // Set traceloop.entity.output from content
+      const contentArray = msg.content;
+      if (contentArray) {
+          llmSpan.setAttribute("traceloop.entity.output", JSON.stringify(contentArray).slice(0, 1000));
+      }
+
+      // Set gen_ai.usage.* from message usage
+      const msgUsage = msg.usage;
+      if (msgUsage) {
+        if (typeof msgUsage.input === "number") {
+          llmSpan.setAttribute("gen_ai.usage.input_tokens", msgUsage.input);
+        }
+        if (typeof msgUsage.output === "number") {
+          llmSpan.setAttribute("gen_ai.usage.output_tokens", msgUsage.output);
+        }
+        if (typeof msgUsage.totalTokens === "number") {
+          llmSpan.setAttribute("gen_ai.usage.total_tokens", msgUsage.totalTokens);
+        }
+        if (typeof msgUsage.cacheRead === "number") {
+          llmSpan.setAttribute("gen_ai.usage.cache_read_tokens", msgUsage.cacheRead);
+        }
+        if (typeof msgUsage.cacheWrite === "number") {
+          llmSpan.setAttribute("gen_ai.usage.cache_write_tokens", msgUsage.cacheWrite);
+        }
+      }
+
+      // Set status based on stopReason
+      const stopReason = msg.stopReason;
+      if (stopReason === "stop" || stopReason === "end_turn") {
+        llmSpan.setStatus({ code: SpanStatusCode.OK });
+      } else if (stopReason) {
+        llmSpan.setStatus({ code: SpanStatusCode.OK });
+        llmSpan.setAttribute("gen_ai.response.stop_reason", stopReason);
+      } else {
+        llmSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+
+      // End span with correct end time
+      llmSpan.end(spanEndTime);
+
+      logger.debug?.(`[otel] LLM span created from message: model=${msgModel}, index=${msgIndex}, startTime=${spanStartTime}, endTime=${spanEndTime}`);
+    } catch (spanError) {
+      logger.debug?.(`[otel] Error creating LLM span for message index ${msgIndex}: ${spanError}`);
+    }
+  }
+
+  /**
+   * Create a tool span from a toolResult message.
+   * 
+   * @param messages - Full messages array
+   * @param msgIndex - Index of the message in the array
+   * @param parentContext - Parent context for the span
+   * @param sessionKey - Session key for logging
+   * @param agentStartTime - Agent start time for fallback timing
+   * @param toolCallMap - Map of toolCallId to toolCall info
+   * @param agentId - Agent ID for security logging
+   */
+  function createToolSpanFromMessage(
+    messages: any[],
+    msgIndex: number,
+    parentContext: Context,
+    sessionKey: string,
+    agentStartTime: number,
+    toolCallMap: Map<string, { name: string; arguments: any; assistantTimestamp: number }>,
+    agentId: string
+  ): void {
+    try {
+      const msg = messages[msgIndex];
+      const toolCallId = msg.toolCallId;
+      const toolName = msg.toolName || "unknown";
+      const isError = msg.isError === true;
+      const spanEndTime = msg.timestamp || Date.now();
+
+      // Get tool call info from map
+      const toolCallInfo = toolCallMap.get(toolCallId);
+      const toolArguments = toolCallInfo?.arguments || {};
+      const spanStartTime = toolCallInfo?.assistantTimestamp || (msgIndex > 0 ? messages[msgIndex - 1]?.timestamp : null) || agentStartTime;
+
+      // Create tool span
+      const toolSpan = tracer.startSpan(
+        `tool.${toolName}`,
+        {
+          kind: SpanKind.INTERNAL,
+          startTime: spanStartTime,
+          attributes: {
+            "gen_ai.tool.name": toolName,
+            "openclaw.session.key": sessionKey,
+            "openclaw.tool.call_id": toolCallId || "",
+          },
+        },
+        parentContext
+      );
+
+      // Set tool input from arguments
+      const inputStr = JSON.stringify(toolArguments).slice(0, 1000);
+      toolSpan.setAttribute("traceloop.entity.input", inputStr);
+
+      // ═══ SECURITY DETECTION: File Access & Dangerous Commands ═══
+      logger.debug?.(`[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(toolArguments)}`);
+      const securityEvent = checkToolSecurity(
+        toolName,
+        toolArguments,
+        toolSpan,
+        securityCounters,
+        sessionKey,
+        agentId
+      );
+      if (securityEvent) {
+        logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
+        // Record security event on span
+        toolSpan.setAttribute("openclaw.security.event", JSON.stringify(securityEvent));
+      }
+
+      // Set tool output from content
+      const contentArray = msg.content;
+      if (contentArray && Array.isArray(contentArray)) {
+        const textParts = contentArray
+          .filter((c: any) => c.type === "text")
+          .map((c: any) => String(c.text || ""));
+        const totalChars = textParts.reduce((sum: number, t: string) => sum + t.length, 0);
+        
+        // Record result metrics
+        toolSpan.setAttribute("openclaw.tool.result_chars", totalChars);
+        toolSpan.setAttribute("openclaw.tool.result_parts", contentArray.length);
+
+        // Record tool output
+        const output = textParts.join("\n").slice(0, 1000);
+        toolSpan.setAttribute("traceloop.entity.output", output);
+      } else if (typeof msg.content === "string") {
+        toolSpan.setAttribute("traceloop.entity.output", msg.content.slice(0, 1000));
+        toolSpan.setAttribute("openclaw.tool.result_chars", msg.content.length);
+        toolSpan.setAttribute("openclaw.tool.result_parts", 1);
+      }
+
+      // Set status based on isError or securityEvent (unified logic)
+      if (isError) {
+        toolSpan.setStatus({ code: SpanStatusCode.ERROR, message: "Tool execution error" });
+      } else if (securityEvent) {
+        toolSpan.setStatus({ code: SpanStatusCode.ERROR, message: `Security event detected: ${securityEvent.detection}` });
+      } else {
+        toolSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+
+      // Calculate and record duration
+      const durationMs = spanEndTime - spanStartTime;
+      toolSpan.setAttribute("openclaw.tool.duration_ms", durationMs);
+
+      // End span with correct end time
+      toolSpan.end(spanEndTime);
+
+      logger.debug?.(`[otel] Tool span created from message: tool=${toolName}, toolCallId=${toolCallId}, startTime=${spanStartTime}, endTime=${spanEndTime}, duration=${durationMs}ms`);
+    } catch (spanError) {
+      logger.debug?.(`[otel] Error creating tool span for message index ${msgIndex}: ${spanError}`);
+    }
+  }
+
+  /**
+   * Create LLM spans and tool spans from messages in the conversation.
+   * This function iterates through messages starting from startIdx and creates:
+   * - An LLM span for each assistant message
+   * - A tool span for each toolResult message
+   * 
+   * @param tracer - OpenTelemetry tracer instance
+   * @param logger - Logger instance for debugging
+   * @param messages - Array of messages from agent_end event
+   * @param sessionCtx - Session trace context containing agent span and timing info
+   * @param sessionKey - Session key for logging
+   * @param securityCounters - Security counters for detection
+   * @param agentId - Agent ID for security logging
+   */
+  function createSpansFromMessages(
+    messages: any[],
+    sessionCtx: SessionTraceContext | undefined,
+    sessionKey: string,
+    agentId: string
+  ): void {
+    if (!sessionCtx?.agentSpan) {
+      logger.debug?.(`[otel] No agent span found, skipping span creation for session=${sessionKey}`);
+      return;
+    }
+
+    const startIdx = sessionCtx.startMessagesLength || 0;
+    const agentStartTime = sessionCtx.startTime || Date.now();
+    
+    // Use agentContext as parent context for all spans
+    const parentContext = sessionCtx.agentContext || sessionCtx.rootContext || context.active();
+
+    // Build a map of toolCallId -> toolCall info (name, arguments, assistantMsgTimestamp)
+    const toolCallMap = new Map<string, { name: string; arguments: any; assistantTimestamp: number }>();
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      
+    }
+
+    // Iterate through messages and create spans
+    for (let i = startIdx; i < messages.length; i++) {
+      const msg = messages[i];
+      
+      if (msg?.role === "assistant") {
+        createLlmSpanFromMessage(messages, i, parentContext, sessionKey, agentStartTime);
+        if (Array.isArray(msg?.content)) {
+          for (const item of msg.content) {
+            if (item?.type === "toolCall" && item?.id) {
+              toolCallMap.set(item.id, {
+                name: item.name || "unknown",
+                arguments: item.arguments || {},
+                assistantTimestamp: msg.timestamp || Date.now(),
+              });
+            }
+          }
+        }
+      } else if (msg?.role === "toolResult") {
+        createToolSpanFromMessage(messages, i, parentContext, sessionKey, agentStartTime, toolCallMap, agentId);
+      }
+    }
+  }
   // api.on(
   //   "message_received",
   //   async (event: any, ctx: any) => {
@@ -159,6 +436,8 @@ export function registerHooks(
         if (sessionCtx) {
           sessionCtx.agentSpan = agentSpan;
           sessionCtx.agentContext = agentContext;
+          // Store the length of historical messages before this conversation
+          sessionCtx.startMessagesLength = event?.messages?.length || 0;
         } else {
           // No root span (e.g., heartbeat) — create a standalone context
           sessionContextMap.set(sessionKey, {
@@ -168,12 +447,13 @@ export function registerHooks(
             agentContext,
             startTime: Date.now(),
             pendingToolSpans: new Map(),
-            pendingLlmSpans: new Map(),
+            // pendingLlmSpans: new Map(),
+            startMessagesLength: event?.messages?.length || 0,
           });
         }
 
 
-        logger.debug?.(`[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}`);
+        logger.debug?.(`[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}, startMessagesLength=${event?.messages?.length || 0}`);
       } catch {
         // Silently ignore
       }
@@ -336,7 +616,7 @@ export function registerHooks(
             sessionCtx.pendingToolSpans.delete(toolName);
           }
 
-          logger.debug?.(`[otel] Tool span ended: tool=${toolName}, session=${sessionKey}`);
+          logger.debug?.(`[otel] Tool span ended: tool=${toolName}, session=${sessionKey}, durationMs=${durationMs}`);
         } else {
           logger.debug?.(`[otel] No pending tool span found for tool=${toolName}, session=${sessionKey}`);
         }
@@ -355,161 +635,161 @@ export function registerHooks(
   // ── llm_input ────────────────────────────────────────────────────
   // Creates an LLM span for tracking chat operations.
 
-  api.on(
-    "llm_input",
-    (event: any, ctx: any) => {
-      try {
-        const runId = event?.runId;
-        const sessionKey = ctx?.sessionKey || "unknown";
-        const provider = event?.provider || "unknown";
-        const model = event?.model || "unknown";
-        const prompt = event?.prompt || "";
-        const startTime = Date.now();
+  // api.on(
+  //   "llm_input",
+  //   (event: any, ctx: any) => {
+  //     try {
+  //       const runId = event?.runId;
+  //       const sessionKey = ctx?.sessionKey || "unknown";
+  //       const provider = event?.provider || "unknown";
+  //       const model = event?.model || "unknown";
+  //       const prompt = event?.prompt || "";
+  //       const startTime = Date.now();
 
-        // Get parent context — prefer agent turn span, fall back to root
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
+  //       // Get parent context — prefer agent turn span, fall back to root
+  //       const sessionCtx = sessionContextMap.get(sessionKey);
+  //       const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
 
-        // Create LLM span with GenAI semantic conventions
-        const span = tracer.startSpan(
-          `chat ${model}`,
-          {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              "gen_ai.system": provider,
-              "gen_ai.operation.name": "chat",
-              "gen_ai.request.model": model,
-              "openclaw.session.key": sessionKey,
-              "openclaw.run.id": runId,
-            },
-          },
-          parentContext
-        );
+  //       // Create LLM span with GenAI semantic conventions
+  //       const span = tracer.startSpan(
+  //         `chat ${model}`,
+  //         {
+  //           kind: SpanKind.CLIENT,
+  //           attributes: {
+  //             "gen_ai.system": provider,
+  //             "gen_ai.operation.name": "chat",
+  //             "gen_ai.request.model": model,
+  //             "openclaw.session.key": sessionKey,
+  //             "openclaw.run.id": runId,
+  //           },
+  //         },
+  //         parentContext
+  //       );
 
-        // Set prompt attributes (user message)
-        if (prompt) {
-          span.setAttribute("gen_ai.prompt.0.role", "user");
-          span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 10000));
-        }
+  //       // Set prompt attributes (user message)
+  //       if (prompt) {
+  //         span.setAttribute("gen_ai.prompt.0.role", "user");
+  //         span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 10000));
+  //       }
 
-        // Store span in pendingLlmSpans for later ending in llm_output
-        if (sessionCtx) {
-          if (!sessionCtx.pendingLlmSpans) {
-            sessionCtx.pendingLlmSpans = new Map();
-          }
-          sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
-        }
+  //       // Store span in pendingLlmSpans for later ending in llm_output
+  //       if (sessionCtx) {
+  //         if (!sessionCtx.pendingLlmSpans) {
+  //           sessionCtx.pendingLlmSpans = new Map();
+  //         }
+  //         sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
+  //       }
 
-        logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
+  //       logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
 
-      return undefined;
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_input hook (via api.on)");
+  //     return undefined;
+  //   },
+  //   { priority: -100 }
+  // );
+  // logger.info("[otel] Registered llm_input hook (via api.on)");
 
-  // ── llm_output ───────────────────────────────────────────────────
-  // Ends the pending LLM span created in llm_input.
+  // // ── llm_output ───────────────────────────────────────────────────
+  // // Ends the pending LLM span created in llm_input.
 
-  api.on(
-    "llm_output",
-    (event: any, ctx: any) => {
-      try {
-        const runId = event?.runId;
-        const sessionKey = ctx?.sessionKey || "unknown";
-        const model = event?.model || "unknown";
-        const lastAssistant = event?.lastAssistant;
+  // api.on(
+  //   "llm_output",
+  //   (event: any, ctx: any) => {
+  //     try {
+  //       const runId = event?.runId;
+  //       const sessionKey = ctx?.sessionKey || "unknown";
+  //       const model = event?.model || "unknown";
+  //       const lastAssistant = event?.lastAssistant;
 
-        // Get session context and pending LLM span
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
+  //       // Get session context and pending LLM span
+  //       const sessionCtx = sessionContextMap.get(sessionKey);
+  //       const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
 
-        if (pendingLlmSpan) {
-          const { span, startTime } = pendingLlmSpan;
+  //       if (pendingLlmSpan) {
+  //         const { span, startTime } = pendingLlmSpan;
 
-          // Set response model
-          span.setAttribute("gen_ai.response.model", model);
+  //         // Set response model
+  //         span.setAttribute("gen_ai.response.model", model);
 
-          // Set completion attributes (assistant response)
-          if (lastAssistant) {
-            const role = lastAssistant.role || "assistant";
-            span.setAttribute("gen_ai.completion.0.role", role);
+  //         // Set completion attributes (assistant response)
+  //         if (lastAssistant) {
+  //           const role = lastAssistant.role || "assistant";
+  //           span.setAttribute("gen_ai.completion.0.role", role);
 
-            // Extract content from lastAssistant
-            const contentArray = lastAssistant.content;
-            if (contentArray && Array.isArray(contentArray)) {
-              // Extract text parts from content array
-              const textParts = contentArray
-                .filter((c: any) => c.type === "text")
-                .map((c: any) => String(c.text || ""));
-              const content = textParts.join("\n");
-              if (content) {
-                span.setAttribute("gen_ai.completion.0.content", content.slice(0, 10000));
-              }
-            } else if (typeof lastAssistant.content === "string") {
-              span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 10000));
-            }
-          }
+  //           // Extract content from lastAssistant
+  //           const contentArray = lastAssistant.content;
+  //           if (contentArray && Array.isArray(contentArray)) {
+  //             // Extract text parts from content array
+  //             const textParts = contentArray
+  //               .filter((c: any) => c.type === "text")
+  //               .map((c: any) => String(c.text || ""));
+  //             const content = textParts.join("\n");
+  //             if (content) {
+  //               span.setAttribute("gen_ai.completion.0.content", content.slice(0, 10000));
+  //             }
+  //           } else if (typeof lastAssistant.content === "string") {
+  //             span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 10000));
+  //           }
+  //         }
 
-          // Extract usage from lastAssistant message
-          const usage = lastAssistant?.usage;
-          if (usage) {
-            if (typeof usage.input === "number") {
-              span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
-            }
-            if (typeof usage.output === "number") {
-              span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
-            }
-            if (typeof usage.totalTokens === "number") {
-              span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
-            }
-            if (typeof usage.cacheRead === "number") {
-              span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
-            }
-            if (typeof usage.cacheWrite === "number") {
-              span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
-            }
-          }
+  //         // Extract usage from lastAssistant message
+  //         const usage = lastAssistant?.usage;
+  //         if (usage) {
+  //           if (typeof usage.input === "number") {
+  //             span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
+  //           }
+  //           if (typeof usage.output === "number") {
+  //             span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
+  //           }
+  //           if (typeof usage.totalTokens === "number") {
+  //             span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
+  //           }
+  //           if (typeof usage.cacheRead === "number") {
+  //             span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
+  //           }
+  //           if (typeof usage.cacheWrite === "number") {
+  //             span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
+  //           }
+  //         }
 
-          // Set span status based on stopReason
-          const stopReason = lastAssistant?.stopReason;
-          if (stopReason === "stop" || stopReason === "end_turn") {
-            span.setStatus({ code: SpanStatusCode.OK });
-          } else if (stopReason) {
-            span.setStatus({ code: SpanStatusCode.OK });
-            span.setAttribute("gen_ai.response.stop_reason", stopReason);
-          } else {
-            span.setStatus({ code: SpanStatusCode.OK });
-          }
+  //         // Set span status based on stopReason
+  //         const stopReason = lastAssistant?.stopReason;
+  //         if (stopReason === "stop" || stopReason === "end_turn") {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //         } else if (stopReason) {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //           span.setAttribute("gen_ai.response.stop_reason", stopReason);
+  //         } else {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //         }
 
-          // Calculate duration
-          const durationMs = Date.now() - startTime;
-          span.setAttribute("openclaw.llm.duration_ms", durationMs);
+  //         // Calculate duration
+  //         const durationMs = Date.now() - startTime;
+  //         span.setAttribute("openclaw.llm.duration_ms", durationMs);
 
-          // End the span
-          span.end();
+  //         // End the span
+  //         span.end();
 
-          // Remove from pendingLlmSpans
-          if (sessionCtx) {
-            sessionCtx.pendingLlmSpans.delete(runId);
-          }
+  //         // Remove from pendingLlmSpans
+  //         if (sessionCtx) {
+  //           sessionCtx.pendingLlmSpans.delete(runId);
+  //         }
 
-          logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
-        } else {
-          logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
-        }
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
+  //         logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
+  //       } else {
+  //         logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
+  //       }
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
 
-      return undefined;
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_output hook (via api.on)");
+  //     return undefined;
+  //   },
+  //   { priority: -100 }
+  // );
+  // logger.info("[otel] Registered llm_output hook (via api.on)");
 
   // ── agent_end ────────────────────────────────────────────────────
   // Ends the agent turn span AND the root request span.
@@ -643,6 +923,10 @@ export function registerHooks(
           } else {
             agentSpan.setStatus({ code: SpanStatusCode.OK });
           }
+
+          
+          // Create LLM spans and tool spans for new messages in this conversation
+          createSpansFromMessages(messages, sessionCtx, sessionKey, agentId);
           sessionCtx.agentEndTime = Date.now();
           // agentSpan.end();
         }
