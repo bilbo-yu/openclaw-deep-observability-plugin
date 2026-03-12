@@ -35,7 +35,7 @@ import {
   sessionContextMap,
   getPendingUsage,
   type SessionTraceContext,
-  ToolCallInfo,
+  type ToolCallInfo,
 } from "./diagnostics.js";
 import {
   checkToolSecurity,
@@ -95,18 +95,20 @@ export function registerHooks(
   /**
    * Create an LLM span from an assistant message.
    *
-   * @param messages - Full messages array
-   * @param msgIndex - Index of the message in the array
+   * @param msg - The assistant message
+   * @param prevMsg - The previous message (for input extraction)
    * @param parentContext - Parent context for the span
    * @param sessionKey - Session key for logging
-   * @param agentStartTime - Agent start time for fallback timing
+   * @param spanStartTime - The start time of the span
+   * @param spanEndTime - The end time of the span
    */
   function createLlmSpanFromMessage(
-    messages: any[],
-    msgIndex: number,
+    msg: any,
+    prevMsg: any | undefined,
     parentContext: Context,
     sessionKey: string,
-    agentStartTime: number,
+    spanStartTime: number,
+    spanEndTime: number,
   ): TokenUsage {
     const tokenUsage: TokenUsage = {
       inputTokens: 0,
@@ -116,25 +118,12 @@ export function registerHooks(
       totalTokens: 0,
     };
     try {
-      const msg = messages[msgIndex];
-      // Calculate span start time
-      let spanStartTime: number;
       // LLM input
       let inputText;
-      if (msgIndex === 0) {
-        // No previous message, use agent start time
-        spanStartTime = agentStartTime;
-      } else {
-        // Use previous message's timestamp
-        const prevMsg = messages[msgIndex - 1];
-        spanStartTime = prevMsg?.timestamp || agentStartTime;
-        if (prevMsg && prevMsg?.role === "user") {
-          inputText = JSON.stringify(prevMsg?.content).slice(0, 10000);
-        }
+      if (prevMsg?.role === "user") {
+        inputText = JSON.stringify(prevMsg?.content).slice(0, 10000);
       }
 
-      // End time is current message's timestamp
-      const spanEndTime = msg.timestamp || Date.now();
 
       // Get model and provider from message
       const msgModel = msg.model || "unknown";
@@ -219,11 +208,11 @@ export function registerHooks(
       llmSpan.end(spanEndTime);
 
       logger.debug?.(
-        `[otel] LLM span created from message: model=${msgModel}, index=${msgIndex}, startTime=${spanStartTime}, endTime=${spanEndTime}`,
+        `[otel] LLM span created from message: model=${msgModel}, startTime=${spanStartTime}, endTime=${spanEndTime}`,
       );
     } catch (spanError) {
       logger.debug?.(
-        `[otel] Error creating LLM span for message index ${msgIndex}: ${spanError}`,
+        `[otel] Error creating LLM span from message: msg = ${msg}, error=${spanError}`,
       );
     }
     return tokenUsage;
@@ -232,37 +221,31 @@ export function registerHooks(
   /**
    * Create a tool span from a toolResult message.
    *
-   * @param messages - Full messages array
-   * @param msgIndex - Index of the message in the array
+   * @param msg - The toolResult message
    * @param parentContext - Parent context for the span
    * @param sessionKey - Session key for logging
-   * @param agentStartTime - Agent start time for fallback timing
    * @param toolCallMap - Map of toolCallId to toolCall info
    * @param agentId - Agent ID for security logging
+   * @param spanStartTime - The start time of the span
+   * @param spanEndTime - The end time of the span
    */
   function createToolSpanFromMessage(
-    messages: any[],
-    msgIndex: number,
+    msg: any,
     parentContext: Context,
     sessionKey: string,
-    agentStartTime: number,
     toolCallMap: Map<string, ToolCallInfo>,
     agentId: string,
+    spanStartTime: number,
+    spanEndTime: number,
   ): void {
     try {
-      const msg = messages[msgIndex];
       const toolCallId = msg.toolCallId;
       const toolName = msg.toolName || "unknown";
       const isError = msg.isError === true;
-      const spanEndTime = msg.timestamp || Date.now();
 
       // Get tool call info from map
       const toolCallInfo = toolCallMap.get(toolCallId);
       const toolArguments = toolCallInfo?.arguments || {};
-      const spanStartTime =
-        toolCallInfo?.startTime ||
-        (msgIndex > 0 ? messages[msgIndex - 1]?.timestamp : null) ||
-        agentStartTime;
 
       // Create tool span
       const toolSpan = tracer.startSpan(
@@ -363,7 +346,7 @@ export function registerHooks(
       );
     } catch (spanError) {
       logger.debug?.(
-        `[otel] Error creating tool span for message index ${msgIndex}: ${spanError}`,
+        `[otel] Error creating tool span from message: msg=${msg}, error=${spanError}`,
       );
     }
   }
@@ -415,8 +398,16 @@ export function registerHooks(
     // Iterate through messages and create spans
     for (let i = startIdx; i < messages.length; i++) {
       const msg = messages[i];
+      const prevMsg = i > 0 ? messages[i - 1] : undefined;
+      const nextMsg = i < messages.length - 1 ? messages[i + 1] : undefined;
+      const spanStartTime = msg.timestamp || agentStartTime;
+      let spanEndTime = Date.now();
+      if (nextMsg) {
+        spanEndTime = nextMsg.timestamp || spanEndTime;
+      }
 
       if (msg?.role === "assistant") {
+
         const {
           inputTokens = 0,
           outputTokens = 0,
@@ -426,11 +417,12 @@ export function registerHooks(
           model,
           provider,
         } = createLlmSpanFromMessage(
-          messages,
-          i,
+          msg,
+          prevMsg,
           parentContext,
           sessionKey,
-          agentStartTime,
+          spanStartTime,
+          spanEndTime,
         );
         tokenUsage.inputTokens += inputTokens;
         tokenUsage.outputTokens += outputTokens;
@@ -446,28 +438,22 @@ export function registerHooks(
         if (Array.isArray(msg?.content)) {
           for (const item of msg.content) {
             if (item?.type === "toolCall" && item?.id) {
-              let toolInfo = sessionCtx.toolCalls.get(item.id);
-              if (!toolInfo) {
-                toolInfo = {
+              sessionCtx.toolCalls.set(item.id, {
                   name: item.name || "unknown",
                   arguments: item.arguments || {},
-                  startTime: msg.timestamp || Date.now(),
-                };
-              } else {
-                toolInfo.arguments = item.arguments || {};
-              }
+                });
             }
           }
         }
       } else if (msg?.role === "toolResult") {
         createToolSpanFromMessage(
-          messages,
-          i,
+          msg,
           parentContext,
           sessionKey,
-          agentStartTime,
           sessionCtx.toolCalls,
           agentId,
+          spanStartTime,
+          spanEndTime,
         );
       }
     }
@@ -579,7 +565,6 @@ export function registerHooks(
             startTime: Date.now(),
             pendingToolSpans: new Map(),
             toolCalls: new Map(),
-            // pendingLlmSpans: new Map(),
             startMessagesLength: event?.messages?.length || 0,
           });
         }
@@ -775,16 +760,11 @@ export function registerHooks(
             durationMs = message.details.durationMs;
           }
           span.setAttribute("openclaw.tool.duration_ms", durationMs);
-          const realStartTime = endTime - durationMs;
           span.end(endTime);
 
           // Remove from pendingToolSpans
           if (sessionCtx) {
             sessionCtx.pendingToolSpans.delete(toolName);
-            sessionCtx.toolCalls.set(toolCallId, {
-              name: toolName,
-              startTime: realStartTime,
-            });
           }
 
           logger.debug?.(

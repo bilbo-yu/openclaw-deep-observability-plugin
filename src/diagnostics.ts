@@ -48,7 +48,6 @@ export interface PendingToolSpan {
 
 export interface ToolCallInfo {
   name: string;
-  startTime: number;
   arguments?: any;
 }
 
@@ -243,7 +242,7 @@ export async function registerDiagnosticsListener(
 
         // End the agent turn span
     if (sessionCtx?.agentSpan) {
-      enrichSpanWithUsage(sessionCtx.agentSpan, evt);
+      // enrichSpanWithUsage(sessionCtx.agentSpan, evt);
       pendingUsageMap.delete(sessionKey);
     }
 
@@ -373,6 +372,7 @@ function handleMessageQueued(evt: any): void {
       rootContext,
       startTime: Date.now(),
       pendingToolSpans: new Map(),
+      toolCalls: new Map(),
       // pendingLlmSpans: new Map(),
     });
 
@@ -409,9 +409,9 @@ function handleMessageProcessed(evt: any): void {
         sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
       }
 
-      // End agent span if it exists and is different from root
-      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
-        sessionCtx.agentSpan.end(sessionCtx.agentEndTime || Date.now());
+      // End agent span if it exists and is different from root and hasn't ended yet
+      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan && !sessionCtx.agentEndTime) {
+        sessionCtx.agentSpan.end();
       }
 
       sessionCtx.rootSpan.end();
