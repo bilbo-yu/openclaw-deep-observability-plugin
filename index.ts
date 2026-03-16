@@ -123,7 +123,7 @@ const otelObservabilityPlugin = {
 
         // 4. Subscribe to OpenClaw diagnostic events (model.usage, etc.)
         //    This gives us cost data and accurate token counts
-        unsubscribeDiagnostics = await registerDiagnosticsListener(telemetry, logger);
+        unsubscribeDiagnostics = await registerDiagnosticsListener(telemetry, config, logger);
         if (hasDiagnosticsSupport()) {
           logger.info("[otel] ✅ Integrated with OpenClaw diagnostics (cost tracking enabled)");
         }

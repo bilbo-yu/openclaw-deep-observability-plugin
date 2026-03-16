@@ -6,7 +6,7 @@ How to develop, test, and contribute to the plugin.
 
 ```bash
 # Clone
-git clone https://github.com/henrikrexed/openclaw-observability-plugin.git
+git clone https://dg.starstao.top/ads/openclaw-observability-plugin.git
 cd openclaw-observability-plugin
 
 # Install dependencies

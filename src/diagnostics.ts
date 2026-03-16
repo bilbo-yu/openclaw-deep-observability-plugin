@@ -26,6 +26,7 @@ import {
   type SecurityCounters,
   SecurityEvent,
 } from "./security.js";
+import { OtelObservabilityConfig } from "./config.js";
 
 // Import from OpenClaw plugin SDK (loaded lazily)
 let onDiagnosticEvent: ((listener: (evt: any) => void) => () => void) | null =
@@ -143,6 +144,7 @@ export function setSecurityCounters(counters: SecurityCounters): void {
  */
 export async function registerDiagnosticsListener(
   telemetry: TelemetryRuntime,
+  config: OtelObservabilityConfig,
   logger: any,
 ): Promise<() => void> {
   // Load the SDK if not already loaded
@@ -171,7 +173,7 @@ export async function registerDiagnosticsListener(
     // message.queued — Create root span for request lifecycle
     // ═══════════════════════════════════════════════════════════════
     if (evtType === "message.queued") {
-      handleMessageQueued(evt);
+      handleMessageQueued(evt, config.captureContent);
       return;
     }
 
@@ -179,7 +181,7 @@ export async function registerDiagnosticsListener(
     // message.processed — End root span after request completion
     // ═══════════════════════════════════════════════════════════════
     if (evtType === "message.processed") {
-      handleMessageProcessed(evt);
+      handleMessageProcessed(evt, config.captureContent);
       return;
     }
 
@@ -379,7 +381,7 @@ export async function checkDiagnosticsSupport(): Promise<boolean> {
  * Handle message.queued diagnostic event — creates root span for request lifecycle.
  * This replaces the message_received hook.
  */
-function handleMessageQueued(evt: any): void {
+function handleMessageQueued(evt: any, captureContent: boolean): void {
   try {
     const channel = evt?.channel || "unknown";
     const sessionKey = evt?.sessionKey || "unknown";
@@ -447,7 +449,7 @@ function handleMessageQueued(evt: any): void {
 /**
  * Handle message.processed diagnostic event — ends root span after request completion.
  */
-function handleMessageProcessed(evt: any): void {
+function handleMessageProcessed(evt: any, captureContent: boolean): void {
   const sessionKey = evt?.sessionKey || "unknown";
   try {
     const success = evt?.outcome === "completed";
@@ -480,13 +482,13 @@ function handleMessageProcessed(evt: any): void {
         sessionCtx.agentSpan.end();
       }
 
-      if (sessionCtx.messageInput) {
+      if (captureContent && sessionCtx.messageInput) {
         sessionCtx.rootSpan.setAttribute(
           "traceloop.entity.input",
           sessionCtx.messageInput,
         );
       }
-      if (sessionCtx.messageOutput) {
+      if (captureContent && sessionCtx.messageOutput) {
         sessionCtx.rootSpan.setAttribute(
           "traceloop.entity.output",
           sessionCtx.messageOutput,

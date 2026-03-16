@@ -136,4 +136,4 @@ Combined with Tetragon kernel monitoring, this provides defense-in-depth securit
 ## Source
 
 - Official plugin: Built into OpenClaw v2026.2.0+
-- Custom plugin: [github.com/henrikrexed/openclaw-observability-plugin](https://github.com/henrikrexed/openclaw-observability-plugin)
+- Custom plugin: [dg.starstao.top/ads/openclaw-observability-plugin](https://dg.starstao.top/ads/openclaw-observability-plugin)

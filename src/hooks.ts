@@ -108,6 +108,7 @@ export function registerHooks(
   config: OtelObservabilityConfig,
 ): void {
   const { tracer, counters, histograms } = telemetry;
+  const captureContent = config.captureContent || false;
   const logger = api.logger;
 
   // ═══════════════════════════════════════════════════════════════════
@@ -171,21 +172,21 @@ export function registerHooks(
           kind: SpanKind.CLIENT,
           startTime: spanStartTime,
           attributes: {
-            "gen_ai.system": msgProvider,
             "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": msgProvider,
+            "gen_ai.system": msgProvider,
             "gen_ai.request.model": msgModel,
             "gen_ai.response.model": msgModel,
-            "openclaw.session.key": sessionKey,
           },
         },
         parentContext,
       );
-      if (inputText) {
+      if (captureContent && inputText) {
         llmSpan.setAttribute("traceloop.entity.input", inputText);
       }
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
-      if (contentArray) {
+      if (captureContent && contentArray) {
         llmSpan.setAttribute(
           "traceloop.entity.output",
           JSON.stringify(contentArray).slice(0, 2048),
@@ -236,13 +237,11 @@ export function registerHooks(
       } else {
         llmSpan.setStatus({ code: SpanStatusCode.OK });
       }
-      const durationMs = spanEndTime - spanStartTime;
-      llmSpan.setAttribute("openclaw.llm.duration_ms", durationMs);
       // End span with correct end time
       llmSpan.end(spanEndTime);
 
       logger.debug?.(
-        `[otel] LLM span created from message: model=${msgModel}, startTime=${spanStartTime}, endTime=${spanEndTime}, durationMs=${durationMs}`,
+        `[otel] LLM span created from message: model=${msgModel}, startTime=${spanStartTime}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`,
       );
     } catch (spanError) {
       logger.debug?.(
@@ -295,10 +294,13 @@ export function registerHooks(
         },
         parentContext,
       );
-
-      // Set tool input from arguments
-      const inputStr = JSON.stringify(toolArguments).slice(0, 1000);
-      toolSpan.setAttribute("traceloop.entity.input", inputStr);
+      if (captureContent && toolArguments) {
+        // Set tool input from arguments
+        toolSpan.setAttribute(
+          "traceloop.entity.output",
+          JSON.stringify(toolArguments).slice(0, 2048),
+        );
+      }
 
       // ═══ SECURITY DETECTION: File Access & Dangerous Commands ═══
       logger.debug?.(
@@ -326,7 +328,7 @@ export function registerHooks(
       // Set tool output from content
       const contentArray = msg.content;
       const { totalChars, totalParts, content } = parseContent(contentArray);
-      if (content) {
+      if (captureContent && content) {
         toolSpan.setAttribute("traceloop.entity.output", content);
       }
       toolSpan.setAttribute("openclaw.tool.result_chars", totalChars);
@@ -531,7 +533,7 @@ export function registerHooks(
   //   { priority: 100 } // High priority — run first to establish context
   // );
 
-  logger.info("[otel] Registered message_received hook (via api.on)");
+  // logger.info("[otel] Registered message_received hook (via api.on)");
 
   // ── before_agent_start ───────────────────────────────────────────
   // Creates an "agent turn" child span under the root request span.
@@ -540,7 +542,9 @@ export function registerHooks(
     "before_agent_start",
     (event: any, ctx: any) => {
       try {
-        logger.debug?.(`[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        logger.debug?.(
+          `[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`,
+        );
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
         // const model = event?.model || "unknown";
@@ -558,15 +562,11 @@ export function registerHooks(
           {
             kind: SpanKind.INTERNAL,
             attributes: {
-              "openclaw.agent.id": agentId,
-              "openclaw.session.key": sessionKey,
+              "gen_ai.agent.id": agentId,
             },
           },
           parentContext,
         );
-        if (prompt) {
-          agentSpan.setAttribute("traceloop.entity.input", prompt);
-        }
 
         const agentContext = trace.setSpan(parentContext, agentSpan);
 
@@ -633,16 +633,15 @@ export function registerHooks(
           {
             kind: SpanKind.INTERNAL,
             attributes: {
+              "gen_ai.operation.name": "execute_tool",
               "gen_ai.tool.name": toolName,
-              "openclaw.session.key": sessionKey,
-              "openclaw.agent.id": agentId,
             },
           },
           parentContext,
         );
 
         // Record tool input
-        if (params) {
+        if (captureContent && params) {
           if (params.content) {
             params.content = "***";
           }
@@ -723,6 +722,7 @@ export function registerHooks(
           // Add additional attributes
           span.setAttribute("openclaw.tool.call_id", toolCallId);
           span.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
+          span.setAttribute("gen_ai.tool.call.id", toolCallId);
 
           // Inspect the message for result metadata
           const message = event?.message;
@@ -734,7 +734,7 @@ export function registerHooks(
             span.setAttribute("openclaw.tool.result_chars", totalChars);
             span.setAttribute("openclaw.tool.result_parts", totalParts);
             // Record tool output
-            if (content) {
+            if (captureContent && content) {
               span.setAttribute("traceloop.entity.output", content);
             }
           }
@@ -1062,11 +1062,16 @@ export function registerHooks(
           const outputInfo = parseContent(output);
 
           let securityEvent = null;
-          if (!sessionCtx.agentInput){
+          if (!sessionCtx.agentInput) {
             sessionCtx.agentInput = inputInfo.content;
           }
           if (sessionCtx.agentInput) {
-            agentSpan.setAttribute("traceloop.entity.input", sessionCtx.agentInput);
+            if (captureContent) {
+              agentSpan.setAttribute(
+                "traceloop.entity.input",
+                sessionCtx.agentInput,
+              );
+            }
             if (!sessionCtx.messageInput) {
               //use the first user message as root span input
               sessionCtx.messageInput = sessionCtx.agentInput;
@@ -1084,10 +1089,12 @@ export function registerHooks(
             }
           }
           if (outputInfo.content) {
-            agentSpan.setAttribute(
-              "traceloop.entity.output",
-              outputInfo.content,
-            );
+            if (captureContent) {
+              agentSpan.setAttribute(
+                "traceloop.entity.output",
+                outputInfo.content,
+              );
+            }
             sessionCtx.messageOutput = outputInfo.content;
           }
 
@@ -1107,6 +1114,8 @@ export function registerHooks(
             agentId,
           );
           agentSpan.setAttribute("gen_ai.system", provider || "unknown");
+          agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
+          agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
           agentSpan.setAttribute("gen_ai.response.model", model || "unknown");
           agentSpan.setAttribute("gen_ai.usage.input_tokens", inputTokens);
           agentSpan.setAttribute("gen_ai.usage.output_tokens", outputTokens);
@@ -1142,7 +1151,7 @@ export function registerHooks(
             agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
             histograms.agentTurnDuration.record(durationMs, {
               "gen_ai.response.model": model || "unknown",
-              "openclaw.agent.id": agentId,
+              "gen_ai.agent.id": agentId,
             });
           }
 

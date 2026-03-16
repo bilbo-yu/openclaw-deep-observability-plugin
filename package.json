@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/otel-observability",
   "version": "0.1.0",
-  "description": "OpenTelemetry observability plugin for OpenClaw — traces, metrics, and logs for your AI agent using OpenLLMetry",
+  "description": "OpenTelemetry observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
   "type": "module",
   "openclaw": {
     "extensions": ["./index.ts"]
@@ -20,7 +20,7 @@
     "dynatrace",
     "openllmetry"
   ],
-  "author": "Henrik Rexed",
+  "author": "Bilbo Yu",
   "license": "Apache-2.0",
   "dependencies": {
     "@traceloop/node-server-sdk": "^0.22.6",
@@ -32,6 +32,10 @@
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.203.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.203.0",
     "@opentelemetry/exporter-metrics-otlp-grpc": "^0.203.0",
+    "@opentelemetry/api-logs": "^0.203.0",
+    "@opentelemetry/sdk-logs": "^0.203.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.203.0",
+    "@opentelemetry/exporter-logs-otlp-grpc": "^0.203.0",
     "@opentelemetry/resources": "^2.0.1",
     "@opentelemetry/semantic-conventions": "^1.30.0"
   },

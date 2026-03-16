@@ -13,6 +13,7 @@ import {
   SpanKind,
   SpanStatusCode,
 } from "@opentelemetry/api";
+import { logs } from "@opentelemetry/api-logs";
 import type {
   Span,
   Tracer,
@@ -38,6 +39,13 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { OTLPMetricExporter as OTLPMetricExporterHTTP } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPMetricExporter as OTLPMetricExporterGRPC } from "@opentelemetry/exporter-metrics-otlp-grpc";
+
+import {
+  LoggerProvider,
+  BatchLogRecordProcessor,
+} from "@opentelemetry/sdk-logs";
+import { OTLPLogExporter as OTLPLogExporterHTTP } from "@opentelemetry/exporter-logs-otlp-http";
+import { OTLPLogExporter as OTLPLogExporterGRPC } from "@opentelemetry/exporter-logs-otlp-grpc";
 
 import type { OtelObservabilityConfig } from "./config.js";
 
@@ -149,6 +157,10 @@ export function initTelemetry(
     config.protocol === "http"
       ? `${config.endpoint}/v1/metrics`
       : config.endpoint;
+  const logsEndpoint =
+    config.protocol === "http"
+      ? `${config.endpoint}/v1/logs`
+      : config.endpoint;
 
   // ── Tracing ─────────────────────────────────────────────────────
 
@@ -209,6 +221,35 @@ export function initTelemetry(
 
     logger.info(
       `[otel] Metrics exporter → ${metricsEndpoint} (${config.protocol}, interval=${config.metricsIntervalMs}ms)`,
+    );
+  }
+
+  // ── Logs ───────────────────────────────────────────────────────
+
+  let loggerProvider: LoggerProvider | undefined;
+
+  if (config.logs) {
+    const logExporter =
+      config.protocol === "grpc"
+        ? new OTLPLogExporterGRPC({
+            url: logsEndpoint,
+            headers: config.headers,
+          })
+        : new OTLPLogExporterHTTP({
+            url: logsEndpoint,
+            headers: config.headers,
+          });
+
+    loggerProvider = new LoggerProvider({
+      resource,
+      processors: [new BatchLogRecordProcessor(logExporter)],
+    });
+
+    // Register as global logger provider
+    logs.setGlobalLoggerProvider(loggerProvider);
+
+    logger.info(
+      `[otel] Log exporter → ${logsEndpoint} (${config.protocol})`,
     );
   }
 
@@ -371,6 +412,7 @@ export function initTelemetry(
     try {
       if (tracerProvider) await tracerProvider.shutdown();
       if (meterProvider) await meterProvider.shutdown();
+      if (loggerProvider) await loggerProvider.shutdown();
     } catch (err) {
       logger.error(
         `[otel] Shutdown error: ${err instanceof Error ? err.message : String(err)}`,
