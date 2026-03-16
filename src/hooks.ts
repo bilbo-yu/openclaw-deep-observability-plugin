@@ -540,12 +540,14 @@ export function registerHooks(
     "before_agent_start",
     (event: any, ctx: any) => {
       try {
+        logger.debug?.(`[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
-        const model = event?.model || "unknown";
-        logger.debug?.(
-          `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
-        );
+        // const model = event?.model || "unknown";
+        const prompt = event?.prompt;
+        // logger.debug?.(
+        //   `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
+        // );
 
         const sessionCtx = sessionContextMap.get(sessionKey);
         const parentContext = sessionCtx?.rootContext || context.active();
@@ -558,11 +560,13 @@ export function registerHooks(
             attributes: {
               "openclaw.agent.id": agentId,
               "openclaw.session.key": sessionKey,
-              "openclaw.agent.model": model,
             },
           },
           parentContext,
         );
+        if (prompt) {
+          agentSpan.setAttribute("traceloop.entity.input", prompt);
+        }
 
         const agentContext = trace.setSpan(parentContext, agentSpan);
 
@@ -572,6 +576,8 @@ export function registerHooks(
           sessionCtx.agentContext = agentContext;
           // Store the length of historical messages before this conversation
           sessionCtx.startMessagesLength = event?.messages?.length || 0;
+          // record message Input
+          sessionCtx.agentInput = prompt;
         } else {
           // No root span (e.g., heartbeat) — create a standalone context
           sessionContextMap.set(sessionKey, {
@@ -583,6 +589,7 @@ export function registerHooks(
             pendingToolSpans: new Map(),
             // toolCalls: new Map(),
             startMessagesLength: event?.messages?.length || 0,
+            agentInput: prompt,
           });
         }
 
@@ -1055,14 +1062,17 @@ export function registerHooks(
           const outputInfo = parseContent(output);
 
           let securityEvent = null;
-          if (inputInfo.content) {
-            agentSpan.setAttribute("traceloop.entity.input", inputInfo.content);
+          if (!sessionCtx.agentInput){
+            sessionCtx.agentInput = inputInfo.content;
+          }
+          if (sessionCtx.agentInput) {
+            agentSpan.setAttribute("traceloop.entity.input", sessionCtx.agentInput);
             if (!sessionCtx.messageInput) {
               //use the first user message as root span input
-              sessionCtx.messageInput = inputInfo.content;
+              sessionCtx.messageInput = sessionCtx.agentInput;
             }
             securityEvent = checkMessageSecurity(
-              inputInfo.content,
+              sessionCtx.agentInput,
               agentSpan,
               securityCounters,
               sessionKey,

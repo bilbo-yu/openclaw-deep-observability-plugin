@@ -217,6 +217,7 @@ export function enrichSpanWithSecurityEvent(
     "security.detection": event.detection,
     "security.severity": event.severity,
     "security.description": event.description,
+    "security.details": JSON.stringify(event.details),
   });
 }
 

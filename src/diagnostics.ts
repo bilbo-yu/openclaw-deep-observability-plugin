@@ -100,6 +100,7 @@ export interface SessionTraceContext {
   rootContext: Context;
   agentSpan?: Span;
   agentContext?: Context;
+  agentInput?: string;
   startTime: number;
   messageInput?: string;
   messageOutput?: string;
