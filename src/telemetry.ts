@@ -14,7 +14,6 @@ import {
   SpanStatusCode,
 } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
-import { Logger as TsLogLogger, ILogObj } from "tslog";
 import type {
   Span,
   Tracer,
@@ -49,6 +48,29 @@ import { OTLPLogExporter as OTLPLogExporterHTTP } from "@opentelemetry/exporter-
 import { OTLPLogExporter as OTLPLogExporterGRPC } from "@opentelemetry/exporter-logs-otlp-grpc";
 
 import type { OtelObservabilityConfig } from "./config.js";
+
+// ═══════════════════════════════════════════════════════════════
+// openclaw/plugin-sdk 动态加载
+// ═══════════════════════════════════════════════════════════════
+type LogTransportRecord = Record<string, unknown>;
+type LogTransport = (logObj: LogTransportRecord) => void;
+type RegisterLogTransport = (transport: LogTransport) => () => void;
+
+let registerLogTransport: RegisterLogTransport | null = null;
+let sdkLoadAttempted = false;
+
+async function loadSdk(): Promise<void> {
+  if (sdkLoadAttempted) return;
+  sdkLoadAttempted = true;
+  try {
+    // Dynamic import to avoid build issues if SDK not available
+    // @ts-ignore - openclaw/plugin-sdk types not available at build time
+    const sdk = (await import("openclaw/plugin-sdk")) as any;
+    registerLogTransport = sdk.registerLogTransport;
+  } catch {
+    // SDK not available — log transport will not be registered
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 日志级别映射: tslog -> OpenTelemetry SeverityNumber
@@ -252,6 +274,7 @@ export function initTelemetry(
   // ── Logs ───────────────────────────────────────────────────────
 
   let loggerProvider: LoggerProvider | undefined;
+  let unsubscribeLogTransport: (() => void) | undefined;
 
   if (config.logs) {
     const logExporter =
@@ -278,129 +301,126 @@ export function initTelemetry(
     );
 
     // ═══════════════════════════════════════════════════════════════
-    // tslog Transport: 将 tslog 日志重定向到 OpenTelemetry
+    // Log Transport: 通过 openclaw/plugin-sdk 将日志重定向到 OpenTelemetry
     // ═══════════════════════════════════════════════════════════════
-    if (logger instanceof TsLogLogger) {
-      // 递归获取根 logger，确保 transport 设置在根上，所有子 logger 都会继承
-      const getRootLogger = (log: TsLogLogger<ILogObj>): TsLogLogger<ILogObj> => {
-        // @ts-ignore - 访问内部 parentLogger 属性
-        const parent = log.parentLogger;
-        return parent ? getRootLogger(parent) : log;
-      };
+    const otelLogger = logs.getLogger("openclaw-observability");
 
-      const rootLogger = getRootLogger(logger);
-      const otelLogger = logs.getLogger("openclaw-observability");
-
-      rootLogger.attachTransport((logObj: ILogObj) => {
-        try {
-          const meta = (logObj as Record<string, unknown>)._meta as
-            | {
-                logLevelName?: string;
-                date?: Date;
-                name?: string;
-                parentNames?: string[];
-                path?: {
-                  filePath?: string;
-                  fileLine?: string;
-                  fileColumn?: string;
-                  filePathWithLine?: string;
-                  method?: string;
-                };
-              }
-            | undefined;
-
-          const logLevelName = meta?.logLevelName ?? "INFO";
-          const severityNumber = logSeverityMap[logLevelName] ?? (9 as SeverityNumber);
-
-          // 提取数字索引的参数并按索引排序
-          const numericArgs = Object.entries(logObj)
-            .filter(([key]) => /^\d+$/.test(key))
-            .sort((a, b) => Number(a[0]) - Number(b[0]))
-            .map(([, value]) => value);
-
-          // 尝试解析第一个参数作为 JSON bindings
-          let bindings: Record<string, unknown> | undefined;
-          if (typeof numericArgs[0] === "string" && numericArgs[0].trim().startsWith("{")) {
-            try {
-              const parsed = JSON.parse(numericArgs[0]);
-              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                bindings = parsed as Record<string, unknown>;
-                numericArgs.shift();
-              }
-            } catch {
-              // ignore malformed json bindings
+    // 创建 log transport 处理函数
+    const logTransportHandler = (logObj: LogTransportRecord) => {
+      try {
+        const meta = logObj._meta as
+          | {
+              logLevelName?: string;
+              date?: Date;
+              name?: string;
+              parentNames?: string[];
+              path?: {
+                filePath?: string;
+                fileLine?: string;
+                fileColumn?: string;
+                filePathWithLine?: string;
+                method?: string;
+              };
             }
-          }
+          | undefined;
 
-          // 提取消息
-          let message = "";
-          if (numericArgs.length > 0 && typeof numericArgs[numericArgs.length - 1] === "string") {
-            message = String(numericArgs.pop());
-          } else if (numericArgs.length === 1) {
-            message = safeStringify(numericArgs[0]);
-            numericArgs.length = 0;
-          }
-          if (!message) {
-            message = "log";
-          }
+        const logLevelName = meta?.logLevelName ?? "INFO";
+        const severityNumber = logSeverityMap[logLevelName] ?? (9 as SeverityNumber);
 
-          // 构建属性
-          const attributes: Record<string, string | number | boolean> = {
-            "openclaw.log.level": logLevelName,
-          };
+        // 提取数字索引的参数并按索引排序
+        const numericArgs = Object.entries(logObj)
+          .filter(([key]) => /^\d+$/.test(key))
+          .sort((a, b) => Number(a[0]) - Number(b[0]))
+          .map(([, value]) => value);
 
-          if (meta?.name) {
-            attributes["openclaw.logger"] = meta.name;
-          }
-          if (meta?.parentNames?.length) {
-            attributes["openclaw.logger.parents"] = meta.parentNames.join(".");
-          }
-          if (bindings) {
-            for (const [key, value] of Object.entries(bindings)) {
-              if (
-                typeof value === "string" ||
-                typeof value === "number" ||
-                typeof value === "boolean"
-              ) {
-                attributes[`openclaw.${key}`] = value;
-              } else if (value != null) {
-                attributes[`openclaw.${key}`] = safeStringify(value);
-              }
+        // 尝试解析第一个参数作为 JSON bindings
+        let bindings: Record<string, unknown> | undefined;
+        if (typeof numericArgs[0] === "string" && numericArgs[0].trim().startsWith("{")) {
+          try {
+            const parsed = JSON.parse(numericArgs[0]);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              bindings = parsed as Record<string, unknown>;
+              numericArgs.shift();
             }
+          } catch {
+            // ignore malformed json bindings
           }
-          if (numericArgs.length > 0) {
-            attributes["openclaw.log.args"] = safeStringify(numericArgs);
-          }
-          if (meta?.path?.filePath) {
-            attributes["code.filepath"] = meta.path.filePath;
-          }
-          if (meta?.path?.fileLine) {
-            attributes["code.lineno"] = Number(meta.path.fileLine);
-          }
-          if (meta?.path?.method) {
-            attributes["code.function"] = meta.path.method;
-          }
-          if (meta?.path?.filePathWithLine) {
-            attributes["openclaw.code.location"] = meta.path.filePathWithLine;
-          }
-
-          // 发送到 OTLP
-          otelLogger.emit({
-            body: message,
-            severityText: logLevelName,
-            severityNumber,
-            attributes,
-            timestamp: meta?.date ?? new Date(),
-          });
-        } catch (err) {
-          // 避免日志 transport 错误影响主流程
         }
-      });
 
-      logger.info("[otel] tslog transport attached for OTLP export");
-    } else {
-      logger.warn?.("[otel] tslog transport not attached: logger is not a TsLogLogger instance");
-    }
+        // 提取消息
+        let message = "";
+        if (numericArgs.length > 0 && typeof numericArgs[numericArgs.length - 1] === "string") {
+          message = String(numericArgs.pop());
+        } else if (numericArgs.length === 1) {
+          message = safeStringify(numericArgs[0]);
+          numericArgs.length = 0;
+        }
+        if (!message) {
+          message = "log";
+        }
+
+        // 构建属性
+        const attributes: Record<string, string | number | boolean> = {
+          "openclaw.log.level": logLevelName,
+        };
+
+        if (meta?.name) {
+          attributes["openclaw.logger"] = meta.name;
+        }
+        if (meta?.parentNames?.length) {
+          attributes["openclaw.logger.parents"] = meta.parentNames.join(".");
+        }
+        if (bindings) {
+          for (const [key, value] of Object.entries(bindings)) {
+            if (
+              typeof value === "string" ||
+              typeof value === "number" ||
+              typeof value === "boolean"
+            ) {
+              attributes[`openclaw.${key}`] = value;
+            } else if (value != null) {
+              attributes[`openclaw.${key}`] = safeStringify(value);
+            }
+          }
+        }
+        if (numericArgs.length > 0) {
+          attributes["openclaw.log.args"] = safeStringify(numericArgs);
+        }
+        if (meta?.path?.filePath) {
+          attributes["code.filepath"] = meta.path.filePath;
+        }
+        if (meta?.path?.fileLine) {
+          attributes["code.lineno"] = Number(meta.path.fileLine);
+        }
+        if (meta?.path?.method) {
+          attributes["code.function"] = meta.path.method;
+        }
+        if (meta?.path?.filePathWithLine) {
+          attributes["openclaw.code.location"] = meta.path.filePathWithLine;
+        }
+
+        // 发送到 OTLP
+        otelLogger.emit({
+          body: message,
+          severityText: logLevelName,
+          severityNumber,
+          attributes,
+          timestamp: meta?.date ?? new Date(),
+        });
+      } catch (err) {
+        // 避免日志 transport 错误影响主流程
+      }
+    };
+
+    // 尝试加载 SDK 并注册 log transport
+    loadSdk().then(() => {
+      if (registerLogTransport) {
+        unsubscribeLogTransport = registerLogTransport(logTransportHandler);
+        logger.info("[otel] Log transport registered for OTLP export via openclaw/plugin-sdk");
+      } else {
+        logger.warn?.("[otel] Log transport not registered: openclaw/plugin-sdk not available");
+      }
+    });
   }
 
   // ── Instruments ─────────────────────────────────────────────────
@@ -559,6 +579,12 @@ export function initTelemetry(
   const shutdown = async () => {
     logger.info("[otel] Shutting down telemetry...");
     clearInterval(metricHeartbeatInterval);
+    
+    // 取消日志传输器注册
+    if (unsubscribeLogTransport) {
+      unsubscribeLogTransport();
+    }
+    
     try {
       if (tracerProvider) await tracerProvider.shutdown();
       if (meterProvider) await meterProvider.shutdown();
