@@ -13,7 +13,8 @@ import {
   SpanKind,
   SpanStatusCode,
 } from "@opentelemetry/api";
-import { logs } from "@opentelemetry/api-logs";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import { Logger as TsLogLogger, ILogObj } from "tslog";
 import type {
   Span,
   Tracer,
@@ -48,6 +49,30 @@ import { OTLPLogExporter as OTLPLogExporterHTTP } from "@opentelemetry/exporter-
 import { OTLPLogExporter as OTLPLogExporterGRPC } from "@opentelemetry/exporter-logs-otlp-grpc";
 
 import type { OtelObservabilityConfig } from "./config.js";
+
+// ═══════════════════════════════════════════════════════════════
+// 日志级别映射: tslog -> OpenTelemetry SeverityNumber
+// ═══════════════════════════════════════════════════════════════
+const logSeverityMap: Record<string, SeverityNumber> = {
+  SILLY: 1,    // TRACE
+  TRACE: 1,    // TRACE
+  DEBUG: 5,    // DEBUG
+  INFO: 9,     // INFO
+  WARN: 13,    // WARN
+  ERROR: 17,   // ERROR
+  FATAL: 21,   // FATAL
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 辅助函数
+// ═══════════════════════════════════════════════════════════════
+const safeStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
 
 const _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS = [
   0.0,
@@ -251,6 +276,131 @@ export function initTelemetry(
     logger.info(
       `[otel] Log exporter → ${logsEndpoint} (${config.protocol})`,
     );
+
+    // ═══════════════════════════════════════════════════════════════
+    // tslog Transport: 将 tslog 日志重定向到 OpenTelemetry
+    // ═══════════════════════════════════════════════════════════════
+    if (logger instanceof TsLogLogger) {
+      // 递归获取根 logger，确保 transport 设置在根上，所有子 logger 都会继承
+      const getRootLogger = (log: TsLogLogger<ILogObj>): TsLogLogger<ILogObj> => {
+        // @ts-ignore - 访问内部 parentLogger 属性
+        const parent = log.parentLogger;
+        return parent ? getRootLogger(parent) : log;
+      };
+
+      const rootLogger = getRootLogger(logger);
+      const otelLogger = logs.getLogger("openclaw-observability");
+
+      rootLogger.attachTransport((logObj: ILogObj) => {
+        try {
+          const meta = (logObj as Record<string, unknown>)._meta as
+            | {
+                logLevelName?: string;
+                date?: Date;
+                name?: string;
+                parentNames?: string[];
+                path?: {
+                  filePath?: string;
+                  fileLine?: string;
+                  fileColumn?: string;
+                  filePathWithLine?: string;
+                  method?: string;
+                };
+              }
+            | undefined;
+
+          const logLevelName = meta?.logLevelName ?? "INFO";
+          const severityNumber = logSeverityMap[logLevelName] ?? (9 as SeverityNumber);
+
+          // 提取数字索引的参数并按索引排序
+          const numericArgs = Object.entries(logObj)
+            .filter(([key]) => /^\d+$/.test(key))
+            .sort((a, b) => Number(a[0]) - Number(b[0]))
+            .map(([, value]) => value);
+
+          // 尝试解析第一个参数作为 JSON bindings
+          let bindings: Record<string, unknown> | undefined;
+          if (typeof numericArgs[0] === "string" && numericArgs[0].trim().startsWith("{")) {
+            try {
+              const parsed = JSON.parse(numericArgs[0]);
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                bindings = parsed as Record<string, unknown>;
+                numericArgs.shift();
+              }
+            } catch {
+              // ignore malformed json bindings
+            }
+          }
+
+          // 提取消息
+          let message = "";
+          if (numericArgs.length > 0 && typeof numericArgs[numericArgs.length - 1] === "string") {
+            message = String(numericArgs.pop());
+          } else if (numericArgs.length === 1) {
+            message = safeStringify(numericArgs[0]);
+            numericArgs.length = 0;
+          }
+          if (!message) {
+            message = "log";
+          }
+
+          // 构建属性
+          const attributes: Record<string, string | number | boolean> = {
+            "openclaw.log.level": logLevelName,
+          };
+
+          if (meta?.name) {
+            attributes["openclaw.logger"] = meta.name;
+          }
+          if (meta?.parentNames?.length) {
+            attributes["openclaw.logger.parents"] = meta.parentNames.join(".");
+          }
+          if (bindings) {
+            for (const [key, value] of Object.entries(bindings)) {
+              if (
+                typeof value === "string" ||
+                typeof value === "number" ||
+                typeof value === "boolean"
+              ) {
+                attributes[`openclaw.${key}`] = value;
+              } else if (value != null) {
+                attributes[`openclaw.${key}`] = safeStringify(value);
+              }
+            }
+          }
+          if (numericArgs.length > 0) {
+            attributes["openclaw.log.args"] = safeStringify(numericArgs);
+          }
+          if (meta?.path?.filePath) {
+            attributes["code.filepath"] = meta.path.filePath;
+          }
+          if (meta?.path?.fileLine) {
+            attributes["code.lineno"] = Number(meta.path.fileLine);
+          }
+          if (meta?.path?.method) {
+            attributes["code.function"] = meta.path.method;
+          }
+          if (meta?.path?.filePathWithLine) {
+            attributes["openclaw.code.location"] = meta.path.filePathWithLine;
+          }
+
+          // 发送到 OTLP
+          otelLogger.emit({
+            body: message,
+            severityText: logLevelName,
+            severityNumber,
+            attributes,
+            timestamp: meta?.date ?? new Date(),
+          });
+        } catch (err) {
+          // 避免日志 transport 错误影响主流程
+        }
+      });
+
+      logger.info("[otel] tslog transport attached for OTLP export");
+    } else {
+      logger.warn?.("[otel] tslog transport not attached: logger is not a TsLogLogger instance");
+    }
   }
 
   // ── Instruments ─────────────────────────────────────────────────
