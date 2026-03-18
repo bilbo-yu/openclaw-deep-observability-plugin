@@ -129,24 +129,8 @@ export interface TelemetryRuntime {
 }
 
 export interface OtelCounters {
-  /** Total LLM requests */
-  llmRequests: Counter;
-  /** Total LLM errors */
-  llmErrors: Counter;
-  /** Total tokens (prompt + completion) */
-  tokensTotal: Counter;
-  /** Prompt tokens */
-  tokensPrompt: Counter;
-  /** Completion tokens */
-  tokensCompletion: Counter;
-  /** Tool invocations */
-  toolCalls: Counter;
-  /** Tool errors */
-  toolErrors: Counter;
   /** Session resets */
   sessionResets: Counter;
-  /** Messages received */
-  messagesReceived: Counter;
   /** Messages sent */
   // messagesSent: Counter;
   /** Security events detected */
@@ -157,6 +141,31 @@ export interface OtelCounters {
   promptInjection: Counter;
   /** Dangerous command executions */
   dangerousCommand: Counter;
+  // ═══════════════════════════════════════════════════════════════
+  // Official diagnostics-otel compatible metrics
+  // ═══════════════════════════════════════════════════════════════
+  /** Token usage by type (official style) */
+  tokens: Counter;
+  /** Estimated model cost (USD) */
+  costUsd: Counter;
+  /** Webhook requests received */
+  webhookReceived: Counter;
+  /** Webhook processing errors */
+  webhookError: Counter;
+  /** Messages queued for processing */
+  messageQueued: Counter;
+  /** Messages processed by outcome */
+  messageProcessed: Counter;
+  /** Command queue lane enqueue events */
+  laneEnqueue: Counter;
+  /** Command queue lane dequeue events */
+  laneDequeue: Counter;
+  /** Session state transitions */
+  sessionState: Counter;
+  /** Sessions stuck in processing */
+  sessionStuck: Counter;
+  /** Run attempts */
+  runAttempt: Counter;
 }
 
 export interface OtelHistograms {
@@ -164,7 +173,7 @@ export interface OtelHistograms {
   tokenHistogram: Histogram;
   /** LLM request duration distribution in seconds */
   llmDurationHistogram: Histogram;
-  /** Agent request processing duration distribution in seconds */
+  /** Message processing duration distribution in seconds */
   messageDurationHistogram: Histogram;
   /** LLM request duration in ms */
   // llmDuration: Histogram;
@@ -172,11 +181,27 @@ export interface OtelHistograms {
   toolDuration: Histogram;
   /** Agent turn duration in ms */
   agentTurnDuration: Histogram;
+  // ═══════════════════════════════════════════════════════════════
+  // Official diagnostics-otel compatible metrics
+  // ═══════════════════════════════════════════════════════════════
+  /** Agent run duration */
+  runDuration: Histogram;
+  /** Context window size and usage */
+  contextTokens: Histogram;
+  /** Webhook processing duration */
+  webhookDuration: Histogram;
+  /** Message processing duration (ms) - official style */
+  messageDuration: Histogram;
+  /** Queue depth on enqueue/dequeue */
+  queueDepth: Histogram;
+  /** Queue wait time before execution */
+  queueWait: Histogram;
+  /** Age of stuck sessions */
+  sessionStuckAge: Histogram;
 }
 
 export interface OtelGauges {
-  /** Currently active sessions */
-  activeSessions: UpDownCounter;
+  // Empty - activeSessions removed
 }
 
 // ── Init ────────────────────────────────────────────────────────────
@@ -435,41 +460,9 @@ export function initTelemetry(
     : metrics.getMeter("openclaw-observability", "0.1.0"); // no-op fallback
 
   const counters: OtelCounters = {
-    llmRequests: meter.createCounter("openclaw.llm.requests", {
-      description: "Total LLM API requests",
-      unit: "requests",
-    }),
-    llmErrors: meter.createCounter("openclaw.llm.errors", {
-      description: "Total LLM API errors",
-      unit: "errors",
-    }),
-    tokensTotal: meter.createCounter("openclaw.llm.tokens.total", {
-      description: "Total tokens consumed (prompt + completion)",
-      unit: "tokens",
-    }),
-    tokensPrompt: meter.createCounter("openclaw.llm.tokens.prompt", {
-      description: "Prompt tokens consumed",
-      unit: "tokens",
-    }),
-    tokensCompletion: meter.createCounter("openclaw.llm.tokens.completion", {
-      description: "Completion tokens consumed",
-      unit: "tokens",
-    }),
-    toolCalls: meter.createCounter("openclaw.tool.calls", {
-      description: "Total tool invocations",
-      unit: "calls",
-    }),
-    toolErrors: meter.createCounter("openclaw.tool.errors", {
-      description: "Total tool errors",
-      unit: "errors",
-    }),
     sessionResets: meter.createCounter("openclaw.session.resets", {
       description: "Total session resets",
       unit: "resets",
-    }),
-    messagesReceived: meter.createCounter("openclaw.messages.received", {
-      description: "Total inbound messages",
-      unit: "messages",
     }),
     // messagesSent: meter.createCounter("openclaw.messages.sent", {
     //   description: "Total outbound messages",
@@ -498,6 +491,53 @@ export function initTelemetry(
         unit: "events",
       },
     ),
+    // ═══════════════════════════════════════════════════════════════
+    // Official diagnostics-otel compatible metrics
+    // ═══════════════════════════════════════════════════════════════
+    tokens: meter.createCounter("openclaw.tokens", {
+      description: "Token usage by type",
+      unit: "1",
+    }),
+    costUsd: meter.createCounter("openclaw.cost.usd", {
+      description: "Estimated model cost (USD)",
+      unit: "1",
+    }),
+    webhookReceived: meter.createCounter("openclaw.webhook.received", {
+      description: "Webhook requests received",
+      unit: "1",
+    }),
+    webhookError: meter.createCounter("openclaw.webhook.error", {
+      description: "Webhook processing errors",
+      unit: "1",
+    }),
+    messageQueued: meter.createCounter("openclaw.message.queued", {
+      description: "Messages queued for processing",
+      unit: "1",
+    }),
+    messageProcessed: meter.createCounter("openclaw.message.processed", {
+      description: "Messages processed by outcome",
+      unit: "1",
+    }),
+    laneEnqueue: meter.createCounter("openclaw.queue.lane.enqueue", {
+      description: "Command queue lane enqueue events",
+      unit: "1",
+    }),
+    laneDequeue: meter.createCounter("openclaw.queue.lane.dequeue", {
+      description: "Command queue lane dequeue events",
+      unit: "1",
+    }),
+    sessionState: meter.createCounter("openclaw.session.state", {
+      description: "Session state transitions",
+      unit: "1",
+    }),
+    sessionStuck: meter.createCounter("openclaw.session.stuck", {
+      description: "Sessions stuck in processing",
+      unit: "1",
+    }),
+    runAttempt: meter.createCounter("openclaw.run.attempt", {
+      description: "Run attempts",
+      unit: "1",
+    }),
   };
 
   const histograms: OtelHistograms = {
@@ -539,13 +579,40 @@ export function initTelemetry(
       description: "Full agent turn duration (LLM + tools)",
       unit: "ms",
     }),
+    // ═══════════════════════════════════════════════════════════════
+    // Official diagnostics-otel compatible metrics
+    // ═══════════════════════════════════════════════════════════════
+    runDuration: meter.createHistogram("openclaw.run.duration_ms", {
+      description: "Agent run duration",
+      unit: "ms",
+    }),
+    contextTokens: meter.createHistogram("openclaw.context.tokens", {
+      description: "Context window size and usage",
+      unit: "1",
+    }),
+    webhookDuration: meter.createHistogram("openclaw.webhook.duration_ms", {
+      description: "Webhook processing duration",
+      unit: "ms",
+    }),
+    messageDuration: meter.createHistogram("openclaw.message.duration_ms", {
+      description: "Message processing duration",
+      unit: "ms",
+    }),
+    queueDepth: meter.createHistogram("openclaw.queue.depth", {
+      description: "Queue depth on enqueue/dequeue",
+      unit: "1",
+    }),
+    queueWait: meter.createHistogram("openclaw.queue.wait_ms", {
+      description: "Queue wait time before execution",
+      unit: "ms",
+    }),
+    sessionStuckAge: meter.createHistogram("openclaw.session.stuck_age_ms", {
+      description: "Age of stuck sessions",
+      unit: "ms",
+    }),
   };
 
   const gauges: OtelGauges = {
-    activeSessions: meter.createUpDownCounter("openclaw.sessions.active", {
-      description: "Currently active sessions",
-      unit: "sessions",
-    }),
   };
 
   // ── Periodic Metric Heartbeat ─────────────────────────────────
@@ -559,15 +626,6 @@ export function initTelemetry(
       const idleAttrs = { "openclaw.idle": true };
 
       // Core counters — emit 0 to keep timeseries alive
-      counters.llmRequests.add(0, idleAttrs);
-      counters.llmErrors.add(0, idleAttrs);
-      counters.tokensTotal.add(0, idleAttrs);
-      counters.tokensPrompt.add(0, idleAttrs);
-      counters.tokensCompletion.add(0, idleAttrs);
-      counters.toolCalls.add(0, idleAttrs);
-      counters.toolErrors.add(0, idleAttrs);
-      counters.messagesReceived.add(0, idleAttrs);
-      // counters.messagesSent.add(0, idleAttrs);
       counters.sessionResets.add(0, idleAttrs);
 
       // Security counters
@@ -575,6 +633,21 @@ export function initTelemetry(
       counters.sensitiveFileAccess.add(0, idleAttrs);
       counters.promptInjection.add(0, idleAttrs);
       counters.dangerousCommand.add(0, idleAttrs);
+
+      // ═══════════════════════════════════════════════════════════════
+      // Official diagnostics-otel compatible counters
+      // ═══════════════════════════════════════════════════════════════
+      counters.tokens.add(0, idleAttrs);
+      counters.costUsd.add(0, idleAttrs);
+      counters.webhookReceived.add(0, idleAttrs);
+      counters.webhookError.add(0, idleAttrs);
+      counters.messageQueued.add(0, idleAttrs);
+      counters.messageProcessed.add(0, idleAttrs);
+      counters.laneEnqueue.add(0, idleAttrs);
+      counters.laneDequeue.add(0, idleAttrs);
+      counters.sessionState.add(0, idleAttrs);
+      counters.sessionStuck.add(0, idleAttrs);
+      counters.runAttempt.add(0, idleAttrs);
     } catch {
       // Never let metric heartbeat errors affect the gateway
     }

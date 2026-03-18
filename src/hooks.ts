@@ -33,7 +33,6 @@ import type { TelemetryRuntime } from "./telemetry.js";
 import type { OtelObservabilityConfig } from "./config.js";
 import {
   sessionContextMap,
-  getPendingUsage,
   type SessionTraceContext,
   type ToolCallInfo,
 } from "./diagnostics.js";
@@ -41,6 +40,7 @@ import {
   checkToolSecurity,
   checkMessageSecurity,
   type SecurityCounters,
+  redactText,
 } from "./security.js";
 
 class TokenUsage {
@@ -182,15 +182,13 @@ export function registerHooks(
         parentContext,
       );
       if (captureContent && inputText) {
-        llmSpan.setAttribute("traceloop.entity.input", inputText);
+        llmSpan.setAttribute("traceloop.entity.input", redactText(inputText));
       }
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
       if (captureContent && contentArray) {
-        llmSpan.setAttribute(
-          "traceloop.entity.output",
-          JSON.stringify(contentArray).slice(0, 2048),
-        );
+        const outputText = JSON.stringify(contentArray).slice(0, 2048);
+        llmSpan.setAttribute("traceloop.entity.output", redactText(outputText));
       }
 
       // Set gen_ai.usage.* from message usage
@@ -356,6 +354,10 @@ export function registerHooks(
       // Calculate and record duration
       const durationMs = spanEndTime - spanStartTime;
       toolSpan.setAttribute("openclaw.tool.duration_ms", durationMs);
+      histograms.toolDuration.record(durationMs, {
+        success: !isError,
+        "tool.name": toolName,
+      });
 
       // End span with correct end time
       toolSpan.end(spanEndTime);
@@ -646,7 +648,7 @@ export function registerHooks(
             params.content = "***";
           }
           const input = JSON.stringify(params).slice(0, 1000);
-          span.setAttribute("traceloop.entity.input", input);
+          span.setAttribute("traceloop.entity.input", redactText(input));
         }
 
         // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
@@ -706,12 +708,6 @@ export function registerHooks(
         const isSynthetic = event?.isSynthetic === true;
         const sessionKey = ctx?.sessionKey || "unknown";
 
-        // Record metric
-        counters.toolCalls.add(1, {
-          "tool.name": toolName,
-          "session.key": sessionKey,
-        });
-
         // Get session context and pending tool span
         const sessionCtx = sessionContextMap.get(sessionKey);
         const pendingToolSpan = sessionCtx?.pendingToolSpans?.get(toolName);
@@ -735,7 +731,7 @@ export function registerHooks(
             span.setAttribute("openclaw.tool.result_parts", totalParts);
             // Record tool output
             if (captureContent && content) {
-              span.setAttribute("traceloop.entity.output", content);
+              span.setAttribute("traceloop.entity.output", redactText(content));
             }
           }
 
@@ -743,7 +739,6 @@ export function registerHooks(
           const isToolError =
             message?.is_error === true || message?.isError === true;
           if (isToolError) {
-            counters.toolErrors.add(1, { "tool.name": toolName });
             span.setStatus({
               code: SpanStatusCode.ERROR,
               message: "Tool execution error",
@@ -768,6 +763,12 @@ export function registerHooks(
             durationMs = message.details.durationMs;
           }
           span.setAttribute("openclaw.tool.duration_ms", durationMs);
+
+          histograms.toolDuration.record(durationMs, {
+            success: !isToolError,
+            "tool.name": toolName,
+          });
+
           span.end(endTime);
 
           // Remove from pendingToolSpans
@@ -1069,7 +1070,7 @@ export function registerHooks(
             if (captureContent) {
               agentSpan.setAttribute(
                 "traceloop.entity.input",
-                sessionCtx.agentInput,
+                redactText(sessionCtx.agentInput),
               );
             }
             if (!sessionCtx.messageInput) {
@@ -1092,7 +1093,7 @@ export function registerHooks(
             if (captureContent) {
               agentSpan.setAttribute(
                 "traceloop.entity.output",
-                outputInfo.content,
+                redactText(outputInfo.content),
               );
             }
             sessionCtx.messageOutput = outputInfo.content;
@@ -1146,15 +1147,7 @@ export function registerHooks(
           //   counters.llmRequests.add(1, metricAttrs);
           // }
 
-          // Record duration histogram
-          if (typeof durationMs === "number") {
-            agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
-            histograms.agentTurnDuration.record(durationMs, {
-              "gen_ai.response.model": model || "unknown",
-              "gen_ai.agent.id": agentId,
-            });
-          }
-
+          let success = true;
           if (errorMsg) {
             agentSpan.setAttribute(
               "openclaw.agent.error",
@@ -1164,6 +1157,7 @@ export function registerHooks(
               code: SpanStatusCode.ERROR,
               message: String(errorMsg).slice(0, 200),
             });
+            success = false;
           } else if (
             securityEvent &&
             (securityEvent.severity === "critical" ||
@@ -1175,6 +1169,15 @@ export function registerHooks(
             });
           } else {
             agentSpan.setStatus({ code: SpanStatusCode.OK });
+          }
+          // Record duration histogram
+          if (typeof durationMs === "number") {
+            agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
+            histograms.agentTurnDuration.record(durationMs, {
+              success: String(success),
+              "gen_ai.response.model": model || "unknown",
+              "gen_ai.agent.id": agentId,
+            });
           }
 
           agentSpan.end();

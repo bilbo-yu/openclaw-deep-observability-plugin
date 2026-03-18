@@ -3,108 +3,137 @@
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://dg.starstao.top/ads/openclaw-observability-plugin/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-OpenTelemetry deep observability for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
-
 📖 **[Full Documentation](https://dg.starstao.top/ads/openclaw-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
 
-## Two Approaches to Observability
+## What is OpenClaw Deep Observability Plugin?
 
-This repository documents **two complementary approaches** to monitoring OpenClaw:
+OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrumentation plugin designed specifically for [OpenClaw](https://github.com/openclaw/openclaw) AI agent systems. It provides comprehensive observability into your AI agents' behavior, performance, and security posture.
 
-| Approach | Best For | Setup Complexity |
-|----------|----------|------------------|
-| **Official Plugin** | Operational metrics, Gateway health, cost tracking | Simple config |
-| **This Plugin** | Deep tracing, llm, tool call visibility, request lifecycle | Plugin installation |
+### Key Capabilities
 
-**Recommendation:** Use this plugin for complete observability.
+- **Deep Tracing**: Captures complete request lifecycles with proper parent-child span hierarchies, allowing you to trace every LLM call, tool execution, and agent interaction end-to-end.
+- **Rich Metrics**: Exposes detailed metrics covering sessions, messages, queues, tokens, LLM operations, tool executions, webhooks, and security events.
+- **Security Detection**: Built-in detection for sensitive file access, prompt injection attempts, and dangerous command executions — all exported as span events for real-time alerting.
+- **Flexible Export**: Supports both HTTP/Protobuf and gRPC protocols for maximum compatibility with OTLP backends like Dynatrace, Grafana Cloud, Jaeger, and more.
+- **Input/Output Capture**: Configurable capture of LLM and tool inputs/outputs for debugging and auditing purposes.
+
+### Use Cases
+
+- **Performance Monitoring**: Identify slow LLM calls, bottlenecks in tool chains, and optimize agent response times.
+- **Cost Tracking**: Monitor token usage and associated costs across all agents and models.
+- **Security Auditing**: Detect and investigate suspicious agent behaviors in real-time.
+- **Debugging**: Trace exact execution flows when troubleshooting agent issues.
+
+## Why OpenClaw Deep Observability Plugin?
+
+OpenClaw provides an official `diagnostics-otel` plugin that offers basic OpenTelemetry observability. However, its capabilities are limited in several critical areas:
+
+### Limitations of the Official Plugin
+
+| Area | Official Plugin Limitation |
+|------|---------------------------|
+| **Traces** | Spans are independent with no parent-child hierarchy, making it impossible to trace request flows |
+| **LLM Calls** | Aggregated into a single span, no per-call visibility |
+| **Tool Calls** | Not captured at all |
+| **Protocol** | HTTP/Protobuf only, no gRPC support |
+| **Security** | No security event detection |
+| **Context** | No context propagation between spans |
+
+### What This Plugin Provides
+
+This plugin was developed to address these gaps and provide **comprehensive, production-ready observability** for OpenClaw deployments:
+
+- ✅ **Complete Span Hierarchy**: Every operation is properly linked, giving you full visibility into request flows
+- ✅ **Per-Call Granularity**: Each LLM call and tool execution is captured as a distinct span with timing and attributes
+- ✅ **Dual Protocol Support**: Choose between HTTP/Protobuf or gRPC based on your infrastructure
+- ✅ **Built-in Security Detection**: Automatic detection of sensitive file access, prompt injection, and dangerous commands
+- ✅ **Full Context Propagation**: Proper OTel context flow for distributed tracing scenarios
+
+### Comparison to Official diagnostics-otel Plugin
+
+#### Comprehensive Comparison Summary
+
+| Dimension | Official Plugin | This Plugin | Notes |
+|-----------|:---------------:|:-----------:|-------|
+| **Traces Observability** | ⭐⭐ | ⭐⭐⭐⭐⭐ | Official: Independent spans, no hierarchy <br> This: Complete parent-child hierarchy, LLM/Tool calls visible, input/output capture |
+| **Metrics Coverage** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: Basic Gateway metrics complete <br> This: 100% compatible + Agent/Tool/Security extra metrics |
+| **Logs Support** | ⭐⭐⭐ | ⭐⭐⭐ | Same as official |
+| **Protocol Support** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: http/protobuf only <br> This: http/protobuf + gRPC dual protocol |
+| **Security Detection** | ☆ | ⭐⭐⭐⭐⭐ | Official: No security detection <br> This: Built-in sensitive file access, prompt injection, dangerous command detection exported as span events |
+
+**Rating Scale:** ⭐⭐⭐⭐⭐ = Complete/Excellent | ⭐⭐⭐⭐ = Good | ⭐⭐⭐ = Basic | ⭐⭐ = Limited | ⭐ = Minimal | ☆ = Not Supported
+
+**Recommendation:** Use this plugin for complete observability, or combine both for comprehensive coverage.
 
 ---
 
-## Approach 1: Official Diagnostics Plugin (Built-in)
+#### Traces Comparison
 
-OpenClaw v2026.2+ includes **built-in OpenTelemetry support**. Just add to `openclaw.json`:
+| Feature | Official Plugin | This Plugin |
+|---------|-----------------|-------------|
+| **Export Protocol** | http/protobuf | http/protobuf, gRPC |
+| **Span Structure** | Independent spans (no parent-child) | Chained spans with hierarchy |
+| **Message Span** | ✅ Independent span `openclaw.message.processed` | ✅ `openclaw.request` (root span) |
+| **Agent Span** | ❌ No | ✅ `openclaw.agent.turn` (child of root) |
+| **Per-LLM Call Spans** | ❌ Aggregated independent span "openclaw.model.usage" | ✅ `chat <model>` child spans |
+| **Per-Tool Call Spans** | ❌ No | ✅ `tool.<name>` child spans |
+| **Webhook Spans** | ✅ Yes, independent span `openclaw.webhook.processed` `openclaw.webhook.error` | ✅ Same as official plugin |
+| **Stuck Session Detection** | ✅ Yes, independent span `openclaw.session.stuck` | ✅ Same as official plugin |
+| **Input/Output Capture** | ❌ No | ✅ `traceloop.entity.input/output` (configurable) |
+| **Security Event Attributes** | ❌ No | ✅ `openclaw.security.event` JSON on tool/agent spans |
+| **Context Propagation** | ❌ No | ✅ Full parent-child context via OTel API |
 
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
-    }
-  }
-}
+**Trace Structure Example (This Plugin):**
 ```
-
-Then restart:
-
-```bash
-openclaw gateway restart
+openclaw.agent.turn (root span)
+├── chat claude-sonnet-4 (LLM call #1)
+├── tool.Read (file read)
+├── chat claude-sonnet-4 (LLM call #2)
+├── tool.exec (shell command)
+├── chat claude-sonnet-4 (LLM call #3)
+├── tool.Write (file write)
+├── chat claude-sonnet-4 (LLM call #4)
+└── tool.web_search
 ```
-
-### What It Captures
-
-**Metrics:**
-- `openclaw.tokens` — Token usage by type (input/output/cache)
-- `openclaw.cost.usd` — Estimated model cost
-- `openclaw.run.duration_ms` — Agent run duration
-- `openclaw.context.tokens` — Context window usage
-- `openclaw.webhook.*` — Webhook processing stats
-- `openclaw.message.*` — Message processing stats
-- `openclaw.queue.*` — Queue depth and wait times
-- `openclaw.session.*` — Session state transitions
-
-**Traces:** Model usage, webhook processing, message processing, stuck sessions
-
-**Logs:** All Gateway logs via OTLP with severity, subsystem, and code location
 
 ---
 
-## Approach 2: This Plugin (This Repo)
+#### Metrics Comparison
 
-For **deeper observability**, install the This Plugin from this repo. It uses OpenClaw's typed plugin hooks to capture the full agent lifecycle.
+| Category | Metric Description | Metric Name | Type | Official Plugin | This Plugin |
+|----------|-------------------|-------------|------|-----------------|-------------|
+| **Session** | Session Resets | `openclaw.session.resets` | Counter | ❌ | ✅ |
+| **Session** | Session State Transitions | `openclaw.session.state` | Counter | ✅ | ✅ |
+| **Session** | Stuck Sessions | `openclaw.session.stuck` | Counter | ✅ | ✅ |
+| **Session** | Stuck Session Age | `openclaw.session.stuck_age_ms` | Histogram | ✅ | ✅ |
+| **Message** | Message Queued | `openclaw.message.queued` | Counter | ✅ | ✅ |
+| **Message** | Message Processed | `openclaw.message.processed` | Counter | ✅ | ✅ |
+| **Message** | Message Process Duration | `openclaw.message.duration_ms` | Histogram | ✅ | ✅ |
+| **Message** | Message Process Duration | `gen_ai.agent.request.duration` | Histogram | ❌ | ✅ |
+| **Queue** | Queue Depth | `openclaw.queue.depth` | Histogram | ✅ | ✅ |
+| **Queue** | Queue Wait Time | `openclaw.queue.wait_ms` | Histogram | ✅ | ✅ |
+| **Queue** | Lane Enqueue | `openclaw.queue.lane.enqueue` | Counter | ✅ | ✅ |
+| **Queue** | Lane Dequeue | `openclaw.queue.lane.dequeue` | Counter | ✅ | ✅ |
+| **Agent** | Run Attempts | `openclaw.run.attempt` (Note: This metric is always zero currently.) | Counter | ✅ | ✅ |
+| **Agent** | Agent Run Duration (success/fail) | `openclaw.agent.turn_duration` | Histogram | ❌ | ✅ |
+| **Token** | Token Usage Counter | `openclaw.tokens` | Counter | ✅ | ✅ |
+| **Token** | Token Usage Distribution | `gen_ai.client.token.usage` | Histogram | ❌ | ✅ |
+| **Token** | Token Cost (USD) | `openclaw.cost.usd` | Counter | ✅ | ✅ |
+| **Token** | Context Window | `openclaw.context.tokens` | Histogram | ✅ | ✅ |
+| **LLM** | LLM Request Duration | `openclaw.run.duration_ms` | Histogram | ✅ | ✅ |
+| **LLM** | LLM Request Duration | `gen_ai.client.operation.duration` | Histogram | ❌ | ✅ |
+| **Tool** | Tool Duration (success/fail) | `openclaw.tool.duration` | Histogram | ❌ | ✅ |
+| **Webhook** | Webhook Received | `openclaw.webhook.received` | Counter | ✅ | ✅ |
+| **Webhook** | Webhook Errors | `openclaw.webhook.error` | Counter | ✅ | ✅ |
+| **Webhook** | Webhook Duration | `openclaw.webhook.duration_ms` | Histogram | ✅ | ✅ |
+| **Security** | Security Events | `openclaw.security.events` | Counter | ❌ | ✅ |
+| **Security** | Sensitive File Access | `openclaw.security.sensitive_file_access` | Counter | ❌ | ✅ |
+| **Security** | Prompt Injection Detection | `openclaw.security.prompt_injection` | Counter | ❌ | ✅ |
+| **Security** | Dangerous Command Detection | `openclaw.security.dangerous_command` | Counter | ❌ | ✅ |
 
-### What It Adds
+---
 
-**Connected Traces:**
-```
-openclaw.request (root span)
-├── openclaw.agent.turn
-│   ├── chat <model> (LLM chat)
-│   ├── tool.Read (file read)
-│   ├── chat <model> (LLM chat)
-│   ├── tool.exec (shell command)  
-│   ├── chat <model> (LLM chat)
-│   ├── tool.Write (file write)
-│   ├── chat <model> (LLM chat)
-│   └── tool.web_search
-│   ├── chat <model> (LLM chat)
-└── (child spans connected via trace context)
-```
-
-**Per-Tool Visibility:**
-- Individual spans for each tool call
-- Tool execution time
-- Result size (characters)
-- Error tracking per tool
-- Input/output
-
-**Per-LLM Visibility:**
-- Individual spans for each LLM call
-- Model, Token usage for this LLM call
-- LLM output
-
-**Request Lifecycle:**
-- Full message → response tracing
-- Session context propagation
-- Agent turn duration with token breakdown
-- Input/output
-
-### Installation
+## Installation
 
 1. Clone this repository:
    ```bash
@@ -127,9 +156,8 @@ openclaw.request (root span)
            "config": {
              "endpoint": "http://localhost:4318",
              "serviceName": "openclaw-gateway",
-             "resourceAttributes":{
-                  //some additional resource attributes for your otel traces/metrics                                                  
-                  "application.name": "openclaw",                                                                     
+             "resourceAttributes": {
+                  "application.name": "openclaw"
               }
            }
          }
@@ -146,77 +174,90 @@ openclaw.request (root span)
 
 ---
 
-## Comparing the Two Approaches
+### Configuration Examples For Different Backends
 
-| Feature | Official Plugin | This Plugin |
-|---------|-----------------|---------------|
-| Token metrics | ✅ Per model | ✅ Per session + model |
-| Cost tracking | ✅ Yes | ✅ Yes (from diagnostics) |
-| Gateway health | ✅ Webhooks, queues, sessions | ❌ Not focused |
-| Session state | ✅ State transitions | ❌ Not tracked |
-| **Tool call tracing** | ❌ No | ✅ Individual tool spans |
-| **Request lifecycle** | ❌ No | ✅ Full request → response |
-| **Connected traces** | ❌ Separate spans | ✅ Parent-child hierarchy |
-| Setup complexity | 🟢 Config only | 🟡 Plugin installation |
-
----
-
-## Backend Examples
-
-### Dynatrace (Direct)
+#### Dynatrace (Direct)
 
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
-      "headers": {
-        "Authorization": "Api-Token {your-token}"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
+    "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Api-Token {your-token}"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
 ```
 
-### Grafana Cloud
+#### Grafana Cloud
 
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
-      "headers": {
-        "Authorization": "Basic {base64-credentials}"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true
+    "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Basic {base64-credentials}"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
 ```
 
-### Local OTel Collector
+#### Local OTel Collector
 
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
+    "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://localhost:4318",
+          "serviceName": "openclaw-gateway",
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -226,30 +267,21 @@ openclaw.request (root span)
 
 ## Configuration Reference
 
-### Official Plugin Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `diagnostics.enabled` | boolean | false | Enable diagnostics system |
-| `diagnostics.otel.enabled` | boolean | false | Enable OTel export |
-| `diagnostics.otel.endpoint` | string | — | OTLP endpoint URL |
-| `diagnostics.otel.protocol` | string | "http/protobuf" | Protocol |
-| `diagnostics.otel.headers` | object | — | Custom headers |
-| `diagnostics.otel.serviceName` | string | "openclaw" | Service name |
-| `diagnostics.otel.traces` | boolean | true | Enable traces |
-| `diagnostics.otel.metrics` | boolean | true | Enable metrics |
-| `diagnostics.otel.logs` | boolean | false | Enable logs |
-| `diagnostics.otel.sampleRate` | number | 1.0 | Trace sampling (0-1) |
+### Plugin Options
 
-### This Plugin Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `endpoint` | string | — | OTLP endpoint URL |
-| `serviceName` | string | "openclaw-gateway" | Service name |
-| `exporterType` | string | "otlp" | Exporter type |
-| `enableTraces` | boolean | true | Enable traces |
-| `enableMetrics` | boolean | true | Enable metrics |
+| Option | Type | Description |
+|--------|------|-------------|
+| `endpoint` | string | OTLP endpoint URL (e.g., `http://localhost:4318` for HTTP, `http://localhost:4317` for gRPC) |
+| `protocol` | string | OTLP export protocol: `"http"` or `"grpc"` |
+| `serviceName` | string | OpenTelemetry service name |
+| `headers` | object | Custom headers for OTLP export (e.g., `{"Authorization": "Api-Token xxx"}` for Dynatrace) |
+| `traces` | boolean | Enable trace export |
+| `metrics` | boolean | Enable metrics export |
+| `logs` | boolean | Enable log export |
+| `captureContent` | boolean | Capture prompt/completion content in spans |
+| `metricsIntervalMs` | integer | Metrics export interval in milliseconds (minimum 1000) |
+| `resourceAttributes` | object | Additional OTel resource attributes (e.g., `{"application.name": "openclaw"}`) |
 
 ---
 
@@ -263,57 +295,20 @@ openclaw.request (root span)
 
 ---
 
-## Optional: Kernel-Level Security with Tetragon
-
-For **defense in depth**, add [Tetragon](https://tetragon.io) eBPF-based monitoring. While the plugins above capture application-level telemetry, Tetragon sees what happens at the kernel level — file access, process execution, network connections, and privilege changes.
-
-### Why Tetragon?
-
-- **Tamper-proof**: Even a compromised agent can't hide its kernel-level actions
-- **Sensitive file detection**: Alert when `.env`, SSH keys, or credentials are accessed
-- **Dangerous command detection**: Catch `rm`, `curl | sh`, `chmod 777`, etc.
-- **Privilege escalation**: Detect `setuid`/`setgid` attempts
-
-### Quick Setup
-
-```bash
-# Install Tetragon
-curl -LO https://github.com/cilium/tetragon/releases/latest/download/tetragon-v1.6.0-amd64.tar.gz
-tar -xzf tetragon-v1.6.0-amd64.tar.gz && cd tetragon-v1.6.0-amd64
-sudo ./install.sh
-
-# Create OpenClaw policies directory
-sudo mkdir -p /etc/tetragon/tetragon.tp.d/openclaw
-
-# Add policies (see docs/security/tetragon.md for full examples)
-# Start Tetragon
-sudo systemctl enable --now tetragon
-```
-
-Tetragon events are exported to `/var/log/tetragon/tetragon.log` and can be ingested by the OTel Collector using the `filelog` receiver.
-
-### Complete Observability Stack
-
-| Layer | Source | What It Shows |
-|-------|--------|---------------|
-| **Application** | This Plugin | Tool calls, tokens, request flow |
-| **Gateway** | Official Plugin | Session health, queues, costs |
-| **Kernel** | Tetragon | System calls, file access, network |
-
-See [Security: Tetragon](./docs/security/tetragon.md) for full installation and configuration guide.
-
----
-
 ## Known Limitations
 
 **Auto-instrumentation not possible:** OpenLLMetry/IITM breaks `@mariozechner/pi-ai` named exports due to ESM/CJS module isolation. All telemetry is captured via hooks, not direct SDK instrumentation.
 
-**Per-LLM-call spans have no input:** LLM call input cannot be traced. 
+**Per-LLM-call spans have no input:** per LLM call spans has no input.
 
 See [Limitations](./docs/limitations.md) for details.
 
 ---
+## Acknowledgments
 
+This project is built on top of [openclaw-observability-plugin](https://github.com/henrikrexed/openclaw-observability-plugin) by [@henrikrexed](https://github.com/henrikrexed). Thanks to the original author for the foundational work on the basic plugin framework.
+
+---
 ## License
 
 MIT

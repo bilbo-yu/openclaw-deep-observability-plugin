@@ -2,7 +2,7 @@
  * OpenClaw OTel Deep Observability Plugin
  *
  * Provides deep OpenTelemetry observability for OpenClaw:
- *   - Connected distributed traces (request → agent turn → tools)
+ *   - Connected distributed traces (request → agent turn → llm/tools)
  *   - Cost tracking via OpenClaw diagnostic events integration
  *   - Token usage (input, output, cache read/write) as spans + metrics
  *   - Tool execution spans with result metadata
@@ -21,7 +21,8 @@
  *             "serviceName": "openclaw-gateway",
  *             "traces": true,
  *             "metrics": true,
- *             "captureContent": false
+ *             "logs": true,
+ *             "captureContent": true
  *           }
  *         }
  *       }

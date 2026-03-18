@@ -10,6 +10,15 @@
  * - message.queued: Creates root span for request lifecycle
  * - message.processed: Ends root span after request completion
  * - model.usage: Token usage and cost data
+ * - webhook.received: Webhook requests received
+ * - webhook.processed: Webhook processing completed
+ * - webhook.error: Webhook processing errors
+ * - queue.lane.enqueue: Command queue lane enqueue events
+ * - queue.lane.dequeue: Command queue lane dequeue events
+ * - session.state: Session state transitions
+ * - session.stuck: Sessions stuck in processing
+ * - run.attempt: Run attempts
+ * - diagnostic.heartbeat: Periodic heartbeat with queue stats
  */
 
 import {
@@ -25,6 +34,7 @@ import {
   checkMessageSecurity,
   type SecurityCounters,
   SecurityEvent,
+  redactText,
 } from "./security.js";
 import { OtelObservabilityConfig } from "./config.js";
 
@@ -70,28 +80,6 @@ export interface PendingLlmSpan {
   startTime: number;
 }
 
-/** Pending usage data waiting to be attached to spans */
-interface PendingUsageData {
-  costUsd?: number;
-  usage: {
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-    total?: number;
-  };
-  context?: {
-    limit?: number;
-    used?: number;
-  };
-  durationMs?: number;
-  provider?: string;
-  model?: string;
-}
-
-/** Map of sessionKey → pending usage data from diagnostic events */
-const pendingUsageMap = new Map<string, PendingUsageData>();
-
 /** Map of sessionKey → active agent span (set by hooks.ts) */
 // export const activeAgentSpans = new Map<string, Span>();
 
@@ -120,7 +108,7 @@ let tracer: ReturnType<typeof trace.getTracer>;
 /** Counters for metrics */
 let telemetryCounters: TelemetryRuntime["counters"];
 
-/** Guages for metrics */
+/** Histograms for metrics */
 let telemetryHistograms: TelemetryRuntime["histograms"];
 
 /** Security counters for detection */
@@ -128,6 +116,9 @@ let securityCounters: SecurityCounters | null = null;
 
 /** Logger instance */
 let diagnosticsLogger: any;
+
+/** Whether traces are enabled */
+let tracesEnabled: boolean = true;
 
 /**
  * Set security counters for message security checks.
@@ -138,8 +129,41 @@ export function setSecurityCounters(counters: SecurityCounters): void {
 }
 
 /**
- * Register diagnostic event listener to capture message.queued, message.processed,
- * and model.usage events.
+ * Helper to add session identity attributes to span attributes.
+ */
+function addSessionIdentityAttrs(
+  spanAttrs: Record<string, string | number>,
+  evt: { sessionKey?: string; sessionId?: string },
+): void {
+  if (evt.sessionKey) {
+    spanAttrs["openclaw.sessionKey"] = evt.sessionKey;
+  }
+  if (evt.sessionId) {
+    spanAttrs["openclaw.sessionId"] = evt.sessionId;
+  }
+}
+
+/**
+ * Helper to create a span with duration (for retrospective spans).
+ */
+function spanWithDuration(
+  name: string,
+  attributes: Record<string, string | number>,
+  durationMs?: number,
+): Span {
+  const startTime =
+    typeof durationMs === "number"
+      ? Date.now() - Math.max(0, durationMs)
+      : undefined;
+  const span = tracer.startSpan(name, {
+    attributes,
+    ...(startTime ? { startTime } : {}),
+  });
+  return span;
+}
+
+/**
+ * Register diagnostic event listener to capture all diagnostic events.
  * Returns unsubscribe function.
  */
 export async function registerDiagnosticsListener(
@@ -161,6 +185,7 @@ export async function registerDiagnosticsListener(
   tracer = telemetry.tracer;
   telemetryCounters = telemetry.counters;
   telemetryHistograms = telemetry.histograms;
+  tracesEnabled = config.traces;
 
   diagnosticsLogger = logger;
 
@@ -169,197 +194,348 @@ export async function registerDiagnosticsListener(
   const unsubscribe = onDiagnosticEvent((evt: any) => {
     const evtType = evt.type;
 
-    // ═══════════════════════════════════════════════════════════════
-    // message.queued — Create root span for request lifecycle
-    // ═══════════════════════════════════════════════════════════════
-    if (evtType === "message.queued") {
-      handleMessageQueued(evt, config.captureContent);
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // message.processed — End root span after request completion
-    // ═══════════════════════════════════════════════════════════════
-    if (evtType === "message.processed") {
-      handleMessageProcessed(evt, config.captureContent);
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // model.usage — Token usage and cost data
-    // ═══════════════════════════════════════════════════════════════
-    if (evtType !== "model.usage") return;
-    // logger.info?.("[otel] evt JSON:", JSON.stringify(evt, null, 2));
-    const sessionKey = evt.sessionKey || "unknown";
-    const usage = evt.usage || {};
-    const costUsd = evt.costUsd;
-    const model = evt.model || "unknown";
-    const provider = evt.provider || "unknown";
-
-    // Store for later attachment to agent span
-    pendingUsageMap.set(sessionKey, {
-      costUsd,
-      usage,
-      context: evt.context,
-      durationMs: evt.durationMs,
-      provider,
-      model,
-    });
-
-    // Record metrics immediately (don't wait for span)
-    const metricAttrs = {
-      "gen_ai.response.model": model,
-      "openclaw.provider": provider,
-    };
-    const otelMetricAttrs = {
-      "gen_ai.request.model": model,
-      "gen_ai.response.model": model,
-      "gen_ai.system": provider,
-    };
-
-    if (usage.input) {
-      counters.tokensPrompt.add(usage.input, metricAttrs);
-      histograms.tokenHistogram.record(usage.input, {
-        ...otelMetricAttrs,
-        "gen_ai.token.type": "input",
-      });
-    }
-    if (usage.output) {
-      counters.tokensCompletion.add(usage.output, metricAttrs);
-      histograms.tokenHistogram.record(usage.output, {
-        ...otelMetricAttrs,
-        "gen_ai.token.type": "output",
-      });
-    }
-    if (usage.cacheRead) {
-      counters.tokensPrompt.add(usage.cacheRead, {
-        ...metricAttrs,
-        "token.type": "cache_read",
-      });
-      histograms.tokenHistogram.record(usage.output, {
-        ...otelMetricAttrs,
-        "gen_ai.token.type": "cache_read",
-      });
-    }
-    if (usage.cacheWrite) {
-      counters.tokensPrompt.add(usage.cacheWrite, {
-        ...metricAttrs,
-        "token.type": "cache_write",
-      });
-      histograms.tokenHistogram.record(usage.output, {
-        ...otelMetricAttrs,
-        "gen_ai.token.type": "cache_write",
-      });
-    }
-    if (usage.total) {
-      counters.tokensTotal.add(usage.total, metricAttrs);
-    }
-
-    // Record cost metric
-    if (typeof costUsd === "number" && costUsd > 0) {
-      telemetry.meter
-        .createCounter("openclaw.llm.cost.usd", {
-          description: "Estimated LLM cost in USD",
-          unit: "usd",
-        })
-        .add(costUsd, metricAttrs);
-    }
-
-    // Record LLM duration
-    if (typeof evt.durationMs === "number") {
-      // histograms.llmDuration.record(evt.durationMs, metricAttrs);
-      histograms.llmDurationHistogram.record(
-        evt.durationMs / 1000.0,
-        otelMetricAttrs,
+    try {
+      switch (evtType) {
+        case "message.queued":
+          handleMessageQueued(evt, config.captureContent);
+          return;
+        case "message.processed":
+          handleMessageProcessed(evt, config.captureContent);
+          return;
+        case "model.usage":
+          handleModelUsage(evt, counters, histograms);
+          return;
+        case "webhook.received":
+          handleWebhookReceived(evt);
+          return;
+        case "webhook.processed":
+          handleWebhookProcessed(evt);
+          return;
+        case "webhook.error":
+          handleWebhookError(evt);
+          return;
+        case "queue.lane.enqueue":
+          handleLaneEnqueue(evt);
+          return;
+        case "queue.lane.dequeue":
+          handleLaneDequeue(evt);
+          return;
+        case "session.state":
+          handleSessionState(evt);
+          return;
+        case "session.stuck":
+          handleSessionStuck(evt);
+          return;
+        case "run.attempt":
+          handleRunAttempt(evt);
+          return;
+        case "diagnostic.heartbeat":
+          handleHeartbeat(evt);
+          return;
+      }
+    } catch (err) {
+      logger.error?.(
+        `[otel] Event handler failed (${evtType}): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-
-    counters.llmRequests.add(1, metricAttrs);
-
-    // If we have an active agent span for this session, enrich it now
-    // const agentSpan = activeAgentSpans.get(sessionKey);
-    const sessionCtx = sessionContextMap.get(sessionKey);
-
-    // End the agent turn span
-    if (sessionCtx?.agentSpan) {
-      // enrichSpanWithUsage(sessionCtx.agentSpan, evt);
-      pendingUsageMap.delete(sessionKey);
-    }
-
-    logger.debug?.(
-      `[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, usage=${JSON.stringify(usage) || "?"}`,
-    );
   });
 
   logger.info(
-    "[otel] Subscribed to OpenClaw diagnostic events (model.usage, etc.)",
+    "[otel] Subscribed to OpenClaw diagnostic events (all event types)",
   );
   return unsubscribe;
 }
 
-/**
- * Get pending usage data for a session (if any).
- * Called by agent_end hook to attach data to span.
- */
-export function getPendingUsage(
-  sessionKey: string,
-): PendingUsageData | undefined {
-  const data = pendingUsageMap.get(sessionKey);
-  if (data) {
-    pendingUsageMap.delete(sessionKey);
-  }
-  return data;
-}
+// ════════════════════════════════════════════════════════════════════════════
+// Event Handlers
+// ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Enrich a span with usage data from diagnostic event.
+ * Handle model.usage diagnostic event — Token usage and cost data.
  */
-export function enrichSpanWithUsage(span: Span, data: PendingUsageData): void {
-  const usage = data.usage || {};
-  let totalTokens = 0;
-  // GenAI semantic convention attributes
-  if (usage.input !== undefined) {
-    totalTokens += usage.input;
-    span.setAttribute("gen_ai.usage.input_tokens", usage.input);
+function handleModelUsage(
+  evt: any,
+  counters: TelemetryRuntime["counters"],
+  histograms: TelemetryRuntime["histograms"],
+): void {
+  const sessionKey = evt.sessionKey || "unknown";
+  const usage = evt.usage || {};
+  const costUsd = evt.costUsd;
+  const model = evt.model || "unknown";
+  const provider = evt.provider || "unknown";
+  const channel = evt.channel || "unknown";
+
+  // Record metrics immediately (don't wait for span)
+  const otelMetricAttrs = {
+    "gen_ai.request.model": model,
+    "gen_ai.response.model": model,
+    "gen_ai.system": provider,
+  };
+
+  // Official diagnostics-otel style attributes
+  const officialAttrs = {
+    "openclaw.channel": channel,
+    "openclaw.provider": provider,
+    "openclaw.model": model,
+  };
+
+  // Record token metrics (official style only)
+  if (usage.input) {
+    histograms.tokenHistogram.record(usage.input, {
+      ...otelMetricAttrs,
+      "gen_ai.token.type": "input",
+    });
+    counters.tokens.add(usage.input, {
+      ...officialAttrs,
+      "openclaw.token": "input",
+    });
   }
-  if (usage.output !== undefined) {
-    totalTokens += usage.output;
-    span.setAttribute("gen_ai.usage.output_tokens", usage.output);
+  if (usage.output) {
+    histograms.tokenHistogram.record(usage.output, {
+      ...otelMetricAttrs,
+      "gen_ai.token.type": "output",
+    });
+    counters.tokens.add(usage.output, {
+      ...officialAttrs,
+      "openclaw.token": "output",
+    });
   }
-  if (usage.cacheRead !== undefined) {
-    totalTokens += usage.cacheRead;
-    span.setAttribute("gen_ai.usage.cache_read_tokens", usage.cacheRead);
+  if (usage.cacheRead) {
+    histograms.tokenHistogram.record(usage.cacheRead, {
+      ...otelMetricAttrs,
+      "gen_ai.token.type": "cache_read",
+    });
+    counters.tokens.add(usage.cacheRead, {
+      ...officialAttrs,
+      "openclaw.token": "cache_read",
+    });
   }
-  if (usage.cacheWrite !== undefined) {
-    totalTokens += usage.cacheWrite;
-    span.setAttribute("gen_ai.usage.cache_write_tokens", usage.cacheWrite);
+  if (usage.cacheWrite) {
+    histograms.tokenHistogram.record(usage.cacheWrite, {
+      ...otelMetricAttrs,
+      "gen_ai.token.type": "cache_write",
+    });
+    counters.tokens.add(usage.cacheWrite, {
+      ...officialAttrs,
+      "openclaw.token": "cache_write",
+    });
+  }
+  if (usage.promptTokens) {
+    counters.tokens.add(usage.promptTokens, {
+      ...officialAttrs,
+      "openclaw.token": "prompt",
+    });
+  }
+  if (usage.total) {
+    counters.tokens.add(usage.total, {
+      ...officialAttrs,
+      "openclaw.token": "total",
+    });
   }
 
-  span.setAttribute("gen_ai.usage.total_tokens", totalTokens);
-  // Cost (custom attribute — not in GenAI semconv yet)
-  if (data.costUsd !== undefined) {
-    span.setAttribute("openclaw.llm.cost_usd", data.costUsd);
+  // Record cost metric (official style)
+  if (typeof costUsd === "number" && costUsd > 0) {
+    counters.costUsd.add(costUsd, officialAttrs);
   }
 
-  // Context window
-  if (data.context?.limit !== undefined) {
-    span.setAttribute("openclaw.context.limit", data.context.limit);
-  }
-  if (data.context?.used !== undefined) {
-    span.setAttribute("openclaw.context.used", data.context.used);
+  // Record LLM duration (original style)
+  if (typeof evt.durationMs === "number") {
+    histograms.llmDurationHistogram.record(
+      evt.durationMs / 1000.0,
+      otelMetricAttrs,
+    );
+    // Official style
+    histograms.runDuration.record(evt.durationMs, officialAttrs);
   }
 
-  // Provider/model
-  if (data.provider) {
-    span.setAttribute("gen_ai.system", data.provider);
+  // Record context window usage (official style)
+  if (evt.context?.limit) {
+    histograms.contextTokens.record(evt.context.limit, {
+      ...officialAttrs,
+      "openclaw.context": "limit",
+    });
   }
-  if (data.model) {
-    span.setAttribute("gen_ai.response.model", data.model);
+  if (evt.context?.used) {
+    histograms.contextTokens.record(evt.context.used, {
+      ...officialAttrs,
+      "openclaw.context": "used",
+    });
   }
+
   diagnosticsLogger.debug?.(
-    `[otel] enrichSpanWithUsage: usage=${JSON.stringify(data?.usage) || "?"}, calc total=${totalTokens}`,
+    `[otel] model.usage: session=${sessionKey}, model=${model}, cost=$${costUsd?.toFixed(4) || "?"}, usage=${JSON.stringify(usage) || "?"}`,
   );
 }
+
+/**
+ * Handle webhook.received diagnostic event.
+ */
+function handleWebhookReceived(evt: any): void {
+  const attrs = {
+    "openclaw.channel": evt.channel ?? "unknown",
+    "openclaw.webhook": evt.updateType ?? "unknown",
+  };
+  telemetryCounters.webhookReceived.add(1, attrs);
+  diagnosticsLogger.debug?.(
+    `[otel] webhook.received: channel=${evt.channel}, type=${evt.updateType}`,
+  );
+}
+
+/**
+ * Handle webhook.processed diagnostic event.
+ */
+function handleWebhookProcessed(evt: any): void {
+  const attrs = {
+    "openclaw.channel": evt.channel ?? "unknown",
+    "openclaw.webhook": evt.updateType ?? "unknown",
+  };
+  if (typeof evt.durationMs === "number") {
+    telemetryHistograms.webhookDuration.record(evt.durationMs, attrs);
+  }
+
+  // Create trace span (official style)
+  if (tracesEnabled) {
+    const spanAttrs: Record<string, string | number> = { ...attrs };
+    if (evt.chatId !== undefined) {
+      spanAttrs["openclaw.chatId"] = String(evt.chatId);
+    }
+    const span = spanWithDuration(
+      "openclaw.webhook.processed",
+      spanAttrs,
+      evt.durationMs,
+    );
+    span.end();
+  }
+
+  diagnosticsLogger.debug?.(
+    `[otel] webhook.processed: channel=${evt.channel}, type=${evt.updateType}, duration=${evt.durationMs}ms`,
+  );
+}
+
+/**
+ * Handle webhook.error diagnostic event.
+ */
+function handleWebhookError(evt: any): void {
+  const attrs = {
+    "openclaw.channel": evt.channel ?? "unknown",
+    "openclaw.webhook": evt.updateType ?? "unknown",
+  };
+  telemetryCounters.webhookError.add(1, attrs);
+
+  // Create trace span with error status (official style)
+  if (tracesEnabled) {
+    const redactedError = redactText(evt.error || "unknown error");
+    const spanAttrs: Record<string, string | number> = {
+      ...attrs,
+      "openclaw.error": redactedError,
+    };
+    if (evt.chatId !== undefined) {
+      spanAttrs["openclaw.chatId"] = String(evt.chatId);
+    }
+    const span = tracer.startSpan("openclaw.webhook.error", {
+      attributes: spanAttrs,
+    });
+    span.setStatus({ code: SpanStatusCode.ERROR, message: redactedError });
+    span.end();
+  }
+
+  diagnosticsLogger.warn?.(
+    `[otel] webhook.error: channel=${evt.channel}, type=${evt.updateType}, error=${evt.error}`,
+  );
+}
+
+/**
+ * Handle queue.lane.enqueue diagnostic event.
+ */
+function handleLaneEnqueue(evt: any): void {
+  const attrs = { "openclaw.lane": evt.lane };
+  telemetryCounters.laneEnqueue.add(1, attrs);
+  telemetryHistograms.queueDepth.record(evt.queueSize, attrs);
+  diagnosticsLogger.debug?.(
+    `[otel] queue.lane.enqueue: lane=${evt.lane}, queueSize=${evt.queueSize}`,
+  );
+}
+
+/**
+ * Handle queue.lane.dequeue diagnostic event.
+ */
+function handleLaneDequeue(evt: any): void {
+  const attrs = { "openclaw.lane": evt.lane };
+  telemetryCounters.laneDequeue.add(1, attrs);
+  telemetryHistograms.queueDepth.record(evt.queueSize, attrs);
+  if (typeof evt.waitMs === "number") {
+    telemetryHistograms.queueWait.record(evt.waitMs, attrs);
+  }
+  diagnosticsLogger.debug?.(
+    `[otel] queue.lane.dequeue: lane=${evt.lane}, queueSize=${evt.queueSize}, waitMs=${evt.waitMs}`,
+  );
+}
+
+/**
+ * Handle session.state diagnostic event.
+ */
+function handleSessionState(evt: any): void {
+  const attrs: Record<string, string> = { "openclaw.state": evt.state };
+  if (evt.reason) {
+    attrs["openclaw.reason"] = redactText(evt.reason);
+  }
+  telemetryCounters.sessionState.add(1, attrs);
+  diagnosticsLogger.debug?.(
+    `[otel] session.state: state=${evt.state}, reason=${evt.reason}`,
+  );
+}
+
+/**
+ * Handle session.stuck diagnostic event.
+ */
+function handleSessionStuck(evt: any): void {
+  const attrs: Record<string, string> = { "openclaw.state": evt.state };
+  telemetryCounters.sessionStuck.add(1, attrs);
+  if (typeof evt.ageMs === "number") {
+    telemetryHistograms.sessionStuckAge.record(evt.ageMs, attrs);
+  }
+
+  // Create trace span (official style)
+  if (tracesEnabled) {
+    const spanAttrs: Record<string, string | number> = { ...attrs };
+    addSessionIdentityAttrs(spanAttrs, evt);
+    spanAttrs["openclaw.queueDepth"] = evt.queueDepth ?? 0;
+    spanAttrs["openclaw.ageMs"] = evt.ageMs ?? 0;
+    const span = tracer.startSpan("openclaw.session.stuck", {
+      attributes: spanAttrs,
+    });
+    span.setStatus({ code: SpanStatusCode.ERROR, message: "session stuck" });
+    span.end();
+  }
+
+  diagnosticsLogger.warn?.(
+    `[otel] session.stuck: state=${evt.state}, ageMs=${evt.ageMs}, queueDepth=${evt.queueDepth}`,
+  );
+}
+
+/**
+ * Handle run.attempt diagnostic event.
+ */
+function handleRunAttempt(evt: any): void {
+  telemetryCounters.runAttempt.add(1, { "openclaw.attempt": evt.attempt });
+  diagnosticsLogger.debug?.(`[otel] run.attempt: attempt=${evt.attempt}`);
+}
+
+/**
+ * Handle diagnostic.heartbeat diagnostic event.
+ */
+function handleHeartbeat(evt: any): void {
+  telemetryHistograms.queueDepth.record(evt.queued, {
+    "openclaw.channel": "heartbeat",
+  });
+  diagnosticsLogger.debug?.(
+    `[otel] diagnostic.heartbeat: queued=${evt.queued}`,
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Utility Functions
+// ════════════════════════════════════════════════════════════════════════════
 
 /**
  * Check if diagnostic events are available.
@@ -388,6 +564,16 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
     const sessionId = evt?.sessionId || sessionKey;
     const source = evt?.source || "unknown";
     const messageText = evt?.text || evt?.message || "";
+
+    // Record official style metrics
+    const attrs = {
+      "openclaw.channel": channel,
+      "openclaw.source": source,
+    };
+    telemetryCounters.messageQueued.add(1, attrs);
+    if (typeof evt.queueDepth === "number") {
+      telemetryHistograms.queueDepth.record(evt.queueDepth, attrs);
+    }
 
     // Create root span for this request
     const rootSpan = tracer.startSpan("openclaw.request", {
@@ -429,13 +615,6 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
       rootContext,
       startTime: Date.now(),
       pendingToolSpans: new Map(),
-      // toolCalls: new Map(),
-      // pendingLlmSpans: new Map(),
-    });
-
-    // Record message count metric
-    telemetryCounters.messagesReceived.add(1, {
-      "openclaw.message.channel": channel,
     });
 
     diagnosticsLogger.debug?.(
@@ -453,11 +632,27 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
   const sessionKey = evt?.sessionKey || "unknown";
   try {
     const success = evt?.outcome === "completed";
+    const channel = evt?.channel || "unknown";
+    const outcome = evt?.outcome || "unknown";
+
+    // Record official style metrics
+    const attrs = {
+      "openclaw.channel": channel,
+      "openclaw.outcome": outcome,
+    };
+    telemetryCounters.messageProcessed.add(1, attrs);
+    const totalMs = evt?.durationMs || 0;
+    if (typeof totalMs === "number") {
+      telemetryHistograms.messageDuration.record(totalMs, attrs);
+      telemetryHistograms.messageDurationHistogram.record(totalMs / 1000.0, {
+        success: String(success),
+        "request.channel": channel,
+        "request.target": "wss://",
+      });
+    }
 
     const sessionCtx = sessionContextMap.get(sessionKey);
-    const totalMs = evt?.durationMs || 0;
     if (sessionCtx?.rootSpan) {
-      // const totalMs = Date.now() - sessionCtx.startTime;
       sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
 
       if (!success) {
@@ -485,13 +680,13 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
       if (captureContent && sessionCtx.messageInput) {
         sessionCtx.rootSpan.setAttribute(
           "traceloop.entity.input",
-          sessionCtx.messageInput,
+          redactText(sessionCtx.messageInput),
         );
       }
       if (captureContent && sessionCtx.messageOutput) {
         sessionCtx.rootSpan.setAttribute(
           "traceloop.entity.output",
-          sessionCtx.messageOutput,
+          redactText(sessionCtx.messageOutput),
         );
       }
 
@@ -501,11 +696,6 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
         `[otel] Root span ended (message.processed) for session=${sessionKey}, duration=${totalMs}ms`,
       );
     }
-    telemetryHistograms.messageDurationHistogram.record(totalMs / 1000.0, {
-      success: String(success),
-      "request.channel": evt?.channel || "unknown",
-      "request.target": "wss://",
-    });
 
     // Clean up
     sessionContextMap.delete(sessionKey);

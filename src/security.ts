@@ -12,6 +12,47 @@ import { SpanStatusCode, type Span } from "@opentelemetry/api";
 import type { Counter } from "@opentelemetry/api";
 
 // ═══════════════════════════════════════════════════════════════════
+// SENSITIVE TEXT REDACTION (from openclaw/plugin-sdk)
+// ═══════════════════════════════════════════════════════════════════
+
+// Import from OpenClaw plugin SDK (loaded lazily)
+let redactSensitiveText: ((text: string) => string) | null = null;
+let sdkLoadAttempted = false;
+
+async function loadSdk(): Promise<void> {
+  if (sdkLoadAttempted) return;
+  sdkLoadAttempted = true;
+  try {
+    // Dynamic import to avoid build issues if SDK not available
+    // @ts-ignore - openclaw/plugin-sdk types not available at build time
+    const sdk = (await import("openclaw/plugin-sdk")) as any;
+    redactSensitiveText = sdk.redactSensitiveText;
+  } catch {
+    // SDK not available — redactText will return original text
+  }
+}
+
+// Load SDK on module initialization
+loadSdk();
+
+/**
+ * Redact sensitive text using the OpenClaw plugin SDK.
+ * Falls back to returning the original text if SDK is not available.
+ * 
+ * This function is used to remove sensitive information (API keys, 
+ * credentials, etc.) from span attributes before export.
+ * 
+ * @param text - The text to redact
+ * @returns The redacted text, or the original text if SDK is not available
+ */
+export function redactText(text: string): string {
+  if (redactSensitiveText) {
+    return redactSensitiveText(text);
+  }
+  return text;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // DETECTION PATTERNS
 // ═══════════════════════════════════════════════════════════════════
 
