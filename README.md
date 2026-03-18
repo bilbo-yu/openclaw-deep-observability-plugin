@@ -82,15 +82,16 @@ This plugin was developed to address these gaps and provide **comprehensive, pro
 
 **Trace Structure Example (This Plugin):**
 ```
-openclaw.agent.turn (root span)
-├── chat claude-sonnet-4 (LLM call #1)
-├── tool.Read (file read)
-├── chat claude-sonnet-4 (LLM call #2)
-├── tool.exec (shell command)
-├── chat claude-sonnet-4 (LLM call #3)
-├── tool.Write (file write)
-├── chat claude-sonnet-4 (LLM call #4)
-└── tool.web_search
+openclaw.request (root span)
+  ├── openclaw.agent.turn
+      ├── chat claude-sonnet-4 (LLM call #1)
+      ├── tool.Read (file read)
+      ├── chat claude-sonnet-4 (LLM call #2)
+      ├── tool.exec (shell command)
+      ├── chat claude-sonnet-4 (LLM call #3)
+      ├── tool.Write (file write)
+      ├── chat claude-sonnet-4 (LLM call #4)
+      └── tool.web_search
 ```
 
 ---
