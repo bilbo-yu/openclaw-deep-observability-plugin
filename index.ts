@@ -1,7 +1,7 @@
 /**
- * OpenClaw OTel Observability Plugin
+ * OpenClaw OTel Deep Observability Plugin
  *
- * Provides full OpenTelemetry observability for OpenClaw:
+ * Provides deep OpenTelemetry observability for OpenClaw:
  *   - Connected distributed traces (request → agent turn → tools)
  *   - Cost tracking via OpenClaw diagnostic events integration
  *   - Token usage (input, output, cache read/write) as spans + metrics
@@ -13,7 +13,7 @@
  *   {
  *     "plugins": {
  *       "entries": {
- *         "otel-observability": {
+ *         "otel-deep-observability": {
  *           "enabled": true,
  *           "config": {
  *             "endpoint": "http://localhost:4318",
@@ -57,7 +57,7 @@ const otelObservabilityPlugin = {
     // ── RPC: status endpoint ────────────────────────────────────────
 
     api.registerGatewayMethod(
-      "otel-observability.status",
+      "otel-deep-observability.status",
       ({ respond }: { respond: (ok: boolean, payload?: unknown) => void }) => {
         respond(true, {
           initialized: telemetry !== null,
@@ -102,10 +102,10 @@ const otelObservabilityPlugin = {
     // ── Background service ──────────────────────────────────────────
 
     api.registerService({
-      id: "otel-observability",
+      id: "otel-deep-observability",
 
       start: async () => {
-        logger.info("[otel] Starting OpenTelemetry observability...");
+        logger.info("[otel] Starting OpenTelemetry deep observability...");
 
         // 1. Initialize our OTel providers FIRST (traces + metrics)
         //    This registers our TracerProvider as global, so all spans
@@ -156,7 +156,7 @@ const otelObservabilityPlugin = {
         name: "otel_status",
         label: "OTel Status",
         description:
-          "Check the OpenTelemetry observability plugin status and configuration.",
+          "Check the OpenTelemetry deep observability plugin status and configuration.",
         parameters: {
           type: "object",
           properties: {},
