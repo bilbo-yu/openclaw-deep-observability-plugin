@@ -32,7 +32,7 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
      },
      "plugins": {
        "load": {
-         "paths": ["/path/to/openclaw-observability-plugin"]
+         "paths": ["/path/to/openclaw-deep-observability-plugin"]
        },
        "entries": {
          "otel-deep-observability": {
@@ -53,7 +53,7 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
 3. Clear cache and restart:
    ```bash
    rm -rf /tmp/jiti
-   systemctl --user restart openclaw-gateway
+   openclaw gateway restart
    ```
 
 See [Getting Started](getting-started.md) for detailed instructions.

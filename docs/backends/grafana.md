@@ -18,7 +18,7 @@ Export OpenClaw traces to **Grafana Tempo** and metrics to **Grafana Mimir** (or
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {

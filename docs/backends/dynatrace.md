@@ -28,7 +28,7 @@ Add to your `openclaw.json`:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -64,7 +64,7 @@ For Dynatrace Managed, use your ActiveGate URL:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -89,7 +89,7 @@ For Dynatrace Managed, use your ActiveGate URL:
 
 ```bash
 rm -rf /tmp/jiti
-systemctl --user restart openclaw-gateway
+openclaw gateway restart
 ```
 
 ## Verify in Dynatrace

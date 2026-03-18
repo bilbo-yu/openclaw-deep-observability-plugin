@@ -148,7 +148,7 @@ openclaw.agent.turn (root span)
      },
      "plugins": {
        "load": {
-         "paths": ["/path/to/openclaw-observability-plugin"]
+         "paths": ["/path/to/openclaw-deep-observability-plugin"]
        },
        "entries": {
          "otel-deep-observability": {
@@ -169,7 +169,7 @@ openclaw.agent.turn (root span)
 3. Clear cache and restart:
    ```bash
    rm -rf /tmp/jiti
-   systemctl --user restart openclaw-gateway
+   openclaw gateway restart
    ```
 
 ---
@@ -185,7 +185,7 @@ openclaw.agent.turn (root span)
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -215,7 +215,7 @@ openclaw.agent.turn (root span)
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -245,7 +245,7 @@ openclaw.agent.turn (root span)
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {

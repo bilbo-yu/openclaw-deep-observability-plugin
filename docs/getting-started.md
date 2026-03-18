@@ -26,7 +26,7 @@ Add to your `openclaw.json`:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -48,7 +48,7 @@ Add to your `openclaw.json`:
 
 ```bash
 rm -rf /tmp/jiti
-systemctl --user restart openclaw-gateway
+openclaw gateway restart
 ```
 
 ### Step 4: Verify
@@ -128,7 +128,7 @@ No collector needed:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -160,7 +160,7 @@ No collector needed:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {

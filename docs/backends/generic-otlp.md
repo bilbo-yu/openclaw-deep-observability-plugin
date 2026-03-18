@@ -11,7 +11,7 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -41,7 +41,7 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -101,7 +101,7 @@ Point at the local collector:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -128,7 +128,7 @@ Point at the local collector:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -158,7 +158,7 @@ Or self-hosted:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -187,7 +187,7 @@ Jaeger supports OTLP natively since v1.35:
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {

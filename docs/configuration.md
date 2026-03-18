@@ -11,7 +11,7 @@ Configure the OpenClaw Deep Observability Plugin via your `openclaw.json`.
   },
   "plugins": {
     "load": {
-      "paths": ["/path/to/openclaw-observability-plugin"]
+      "paths": ["/path/to/openclaw-deep-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -243,7 +243,7 @@ After modifying configuration:
 
 ```bash
 rm -rf /tmp/jiti
-systemctl --user restart openclaw-gateway
+openclaw gateway restart
 ```
 
 ---
