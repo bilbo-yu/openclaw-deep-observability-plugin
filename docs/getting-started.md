@@ -7,73 +7,26 @@ Get OpenTelemetry observability for your OpenClaw AI agents.
 - OpenClaw v2026.2.0 or later
 - An OTLP endpoint (local collector, Dynatrace, Grafana, etc.)
 
-## Option 1: Official Diagnostics Plugin (Recommended Start)
-
-The fastest way to get observability. No installation needed — just configure.
-
-### Step 1: Add Configuration
-
-Add to your `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
-    }
-  }
-}
-```
-
-### Step 2: Restart Gateway
-
-```bash
-openclaw gateway restart
-```
-
-### Step 3: Verify
-
-Send a message to your agent and check your backend for:
-
-- **Metrics:** `openclaw.tokens`, `openclaw.cost.usd`, `openclaw.run.duration_ms`
-- **Traces:** `openclaw.model.usage`, `openclaw.message.processed`
-- **Logs:** Gateway logs with severity and code location
-
----
-
-## Option 2: Custom Hook-Based Plugin (Deeper Tracing)
-
-For connected traces and per-tool-call visibility, add the custom plugin.
+## Installation
 
 ### Step 1: Clone the Repository
 
 ```bash
-cd ~/.openclaw/extensions
-git clone https://dg.starstao.top/ads/otel-deep-observability.git otel-deep-observability
+git clone https://github.com/bilbo-yu/openclaw-deep-observability-plugin.git
 ```
 
-### Step 2: Install Dependencies
+### Step 2: Configure OpenClaw
 
-```bash
-cd otel-deep-observability
-npm install
-```
-
-### Step 3: Configure OpenClaw
-
-Add to your `~/.openclaw/openclaw.json`:
+Add to your `openclaw.json`:
 
 ```json
 {
+  "diagnostics": {
+     "enabled": true
+  },
   "plugins": {
     "load": {
-      "paths": ["~/.openclaw/extensions/otel-deep-observability"]
+      "paths": ["/path/to/openclaw-observability-plugin"]
     },
     "entries": {
       "otel-deep-observability": {
@@ -81,8 +34,9 @@ Add to your `~/.openclaw/openclaw.json`:
         "config": {
           "endpoint": "http://localhost:4318",
           "serviceName": "openclaw-gateway",
-          "enableTraces": true,
-          "enableMetrics": true
+          "resourceAttributes": {
+               "application.name": "openclaw"
+           }
         }
       }
     }
@@ -90,66 +44,28 @@ Add to your `~/.openclaw/openclaw.json`:
 }
 ```
 
-### Step 4: Clear Cache and Restart
+### Step 3: Clear Cache and Restart
 
 ```bash
 rm -rf /tmp/jiti
 systemctl --user restart openclaw-gateway
-# Or: openclaw gateway restart
 ```
 
-### Step 5: Verify Connected Traces
+### Step 4: Verify
 
-Send a message that triggers tool calls (e.g., "read my AGENTS.md file"). You should see:
+Send a message to your agent and check your backend for connected traces:
 
 ```
-openclaw.request
-└── openclaw.agent.turn
-    └── tool.Read
+openclaw.agent.turn (root span)
+├── chat claude-sonnet-4 (LLM call #1)
+├── tool.Read (file read)
+├── chat claude-sonnet-4 (LLM call #2)
+├── tool.exec (shell command)
+├── chat claude-sonnet-4 (LLM call #3)
+├── tool.Write (file write)
+├── chat claude-sonnet-4 (LLM call #4)
+└── tool.web_search
 ```
-
----
-
-## Using Both Plugins Together
-
-For complete observability, enable both:
-
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
-    }
-  },
-  "plugins": {
-    "load": {
-      "paths": ["~/.openclaw/extensions/otel-deep-observability"]
-    },
-    "entries": {
-      "otel-deep-observability": {
-        "enabled": true,
-        "config": {
-          "endpoint": "http://localhost:4318",
-          "serviceName": "openclaw-gateway"
-        }
-      }
-    }
-  }
-}
-```
-
-**What you get:**
-
-| Source | Data |
-|--------|------|
-| Official | Gateway health, queue metrics, log forwarding, session states |
-| Custom | Connected request traces, tool call spans, agent turn details |
 
 ---
 
@@ -208,17 +124,26 @@ No collector needed:
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://{environment-id}.live.dynatrace.com/api/v2/otlp",
-      "headers": {
-        "Authorization": "Api-Token {your-token}"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Api-Token {your-token}"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -231,16 +156,26 @@ No collector needed:
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
-      "headers": {
-        "Authorization": "Basic {base64(instanceId:apiKey)}"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Basic {base64-credentials}"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }

@@ -5,8 +5,8 @@
 export interface OtelObservabilityConfig {
   /** OTLP endpoint URL */
   endpoint: string;
-  /** OTLP export protocol: 'http' (OTLP/HTTP) or 'grpc' (OTLP/gRPC) */
-  protocol: "http" | "grpc";
+  /** OTLP export protocol: 'http/protobuf' (OTLP/HTTP with Protobuf) or 'grpc' (OTLP/gRPC) */
+  protocol: "http/protobuf" | "grpc";
   /** OpenTelemetry service name */
   serviceName: string;
   /** Custom headers for OTLP export (e.g., Authorization for Dynatrace) */
@@ -27,7 +27,7 @@ export interface OtelObservabilityConfig {
 
 const DEFAULTS: OtelObservabilityConfig = {
   endpoint: "http://localhost:4318",
-  protocol: "http",
+  protocol: "http/protobuf",
   serviceName: "openclaw-gateway",
   headers: {},
   traces: true,

@@ -1,8 +1,8 @@
 # Architecture
 
-How OpenClaw observability works — both the official plugin and custom hook-based approach.
+How the OpenClaw Deep Observability Plugin works.
 
-## Overview: Two Approaches
+## Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -48,77 +48,7 @@ How OpenClaw observability works — both the official plugin and custom hook-ba
                    └─────────────────┘
 ```
 
-## Approach 1: Official Plugin (diagnostics-otel)
-
-### How It Works
-
-The official plugin uses the **diagnostic event bus** — a publish-subscribe system where the Gateway emits events and plugins consume them.
-
-```
-Gateway Core                    diagnostics-otel Plugin
-     │                                   │
-     │  emit("model.usage", {...})       │
-     │ ─────────────────────────────────>│
-     │                                   │  ──> create span
-     │                                   │  ──> update counters
-     │                                   │  ──> record histogram
-     │                                   │
-     │  emit("message.processed", {...}) │
-     │ ─────────────────────────────────>│
-     │                                   │  ──> create span
-     │                                   │  ──> update counters
-```
-
-### Diagnostic Events
-
-| Event | When Emitted | Data Included |
-|-------|--------------|---------------|
-| `model.usage` | After LLM call | tokens, cost, model, duration |
-| `webhook.received` | HTTP request arrives | channel, type |
-| `webhook.processed` | Handler completes | duration, chatId |
-| `webhook.error` | Handler fails | error message |
-| `message.queued` | Added to queue | channel, source, depth |
-| `message.processed` | Processing done | outcome, duration |
-| `queue.lane.enqueue` | Lane add | lane, size |
-| `queue.lane.dequeue` | Lane remove | lane, size, wait time |
-| `session.state` | State change | state, reason |
-| `session.stuck` | Stuck detected | age, queue depth |
-
-### OTel Signals Created
-
-**Metrics:**
-```
-openclaw.tokens{type="input|output|cache_read|cache_write"}
-openclaw.cost.usd
-openclaw.run.duration_ms
-openclaw.context.tokens{type="limit|used"}
-openclaw.webhook.received
-openclaw.webhook.error
-openclaw.webhook.duration_ms
-openclaw.message.queued
-openclaw.message.processed
-openclaw.message.duration_ms
-openclaw.queue.depth
-openclaw.queue.wait_ms
-openclaw.session.state
-openclaw.session.stuck
-openclaw.session.stuck_age_ms
-```
-
-**Traces:**
-- `openclaw.model.usage` — Per LLM call span
-- `openclaw.webhook.processed` — Per webhook span
-- `openclaw.webhook.error` — Error span (with status=ERROR)
-- `openclaw.message.processed` — Per message span
-- `openclaw.session.stuck` — Stuck detection span
-
-**Logs:**
-- All Gateway logs as OTel LogRecords
-- Includes severity, subsystem, code location
-
----
-
-## Approach 2: Custom Hook-Based Plugin
+## Implementation Details
 
 ### How It Works
 
@@ -201,32 +131,16 @@ openclaw.request (root)
 
 ---
 
-## Data Flow Comparison
+## Data Flow
 
-### Official Plugin: Token Tracking
-
-```
-1. Agent calls LLM via pi-ai
-2. pi-ai returns response with .usage
-3. Gateway calculates cost
-4. Gateway emits "model.usage" event with:
-   - usage: {input, output, cacheRead, cacheWrite}
-   - costUsd: 0.0234
-   - model: "claude-..."
-   - durationMs: 2341
-5. diagnostics-otel receives event
-6. Creates metrics + span
-7. Batches and exports via OTLP
-```
-
-### Custom Plugin: Token Tracking
+### Token Tracking
 
 ```
 1. Agent calls LLM via pi-ai
 2. pi-ai returns response with .usage
 3. Gateway fires agent_end hook with:
    - messages: [...including assistant messages with .usage]
-4. Custom plugin:
+4. Plugin:
    - Parses messages for usage data
    - Checks for pending diagnostic data (if available)
    - Adds attributes to existing agent turn span
@@ -247,18 +161,7 @@ openclaw.request (root)
 | `openclaw.channel` | Channel (whatsapp, telegram, etc.) |
 | `openclaw.session.key` | Session identifier |
 
-### Official Plugin Specific
-
-| Attribute | Description |
-|-----------|-------------|
-| `openclaw.provider` | LLM provider |
-| `openclaw.model` | Model name |
-| `openclaw.token` | Token type (input/output/cache_*) |
-| `openclaw.webhook` | Webhook update type |
-| `openclaw.outcome` | Message outcome |
-| `openclaw.state` | Session state |
-
-### Custom Plugin Specific
+### Plugin Attributes
 
 | Attribute | Description |
 |-----------|-------------|
@@ -276,44 +179,27 @@ openclaw.request (root)
 
 ### Batching
 
-Both plugins use batched export:
+The plugin uses batched export:
 - **Traces:** BatchSpanProcessor (default 5s or 512 spans)
 - **Metrics:** PeriodicExportingMetricReader (default 60s)
 - **Logs:** BatchLogRecordProcessor (default 5s)
 
 ### Overhead
 
-| Plugin | Overhead Source |
-|--------|-----------------|
-| Official | Event subscription, metric/span creation |
-| Custom | Hook interception, context map management |
-
-Both are lightweight — the OTel SDK handles batching efficiently.
-
-### Sampling
-
-Reduce trace volume with `sampleRate`:
-
-```json
-{
-  "diagnostics": {
-    "otel": {
-      "sampleRate": 0.1  // 10% of traces
-    }
-  }
-}
-```
+The plugin is lightweight — the OTel SDK handles batching efficiently. Overhead comes from:
+- Hook interception
+- Context map management
 
 ---
 
-## When to Use Each
+## Use Cases
 
-| Use Case | Recommended |
+| Use Case | Supported |
 |----------|-------------|
-| Production monitoring | Official |
-| Cost/token dashboards | Official |
-| Gateway health alerts | Official |
-| Debugging specific requests | Custom |
-| Understanding agent behavior | Custom |
-| Tool execution analysis | Custom |
-| Complete observability | Both |
+| Production monitoring | ✅ |
+| Cost/token dashboards | ✅ |
+| Gateway health alerts | ✅ |
+| Debugging specific requests | ✅ |
+| Understanding agent behavior | ✅ |
+| Tool execution analysis | ✅ |
+| Security event detection | ✅ |

@@ -1,18 +1,12 @@
 # Limitations
 
-## Official diagnostics-otel Plugin Dependency Issue
+## Auto-Instrumentation Not Possible
 
-When OpenClaw is installed via **npm** (not pnpm from source), the bundled `@openclaw/diagnostics-otel` plugin may fail to load with:
+OpenLLMetry/IITM breaks `@mariozechner/pi-ai` named exports due to ESM/CJS module isolation. All telemetry is captured via hooks, not direct SDK instrumentation.
 
-```
-Error: Cannot find module '@opentelemetry/api'
-```
+## Per-LLM-Call Spans Have No Input
 
-**Why:** The official plugin uses `workspace:*` dependency protocol (pnpm monorepo feature) that doesn't resolve when installed via npm.
-
-**Workaround:** Use this custom plugin instead, which has its own properly installed OTel dependencies.
-
-**Note:** Don't run both plugins simultaneously — they both initialize the OTel SDK which can cause conflicts.
+Per LLM call spans have no input attribute due to how the LLM provider interface exposes data.
 
 ---
 

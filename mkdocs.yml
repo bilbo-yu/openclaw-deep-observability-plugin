@@ -1,7 +1,7 @@
 site_name: Otel Deep Observability Plugin
 site_description: Deep OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs
-site_url: https://dg.starstao.top/ads/openclaw-observability-plugin
-repo_url: https://dg.starstao.top/ads/openclaw-observability-plugin
+site_url: https://github.com/bilbo-yu/openclaw-deep-observability-plugin
+repo_url: https://github.com/bilbo-yu/openclaw-deep-observability-plugin
 repo_name: ads/openclaw-observability-plugin
 edit_uri: edit/main/docs/
 
@@ -85,6 +85,6 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://dg.starstao.top/ads/openclaw-observability-plugin
+      link: https://github.com/bilbo-yu/openclaw-deep-observability-plugin
     - icon: fontawesome/brands/youtube
       link: https://youtube.com/@IsItObservable

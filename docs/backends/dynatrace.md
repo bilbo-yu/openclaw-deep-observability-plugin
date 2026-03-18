@@ -19,29 +19,38 @@ Send OpenClaw telemetry directly to Dynatrace using OTLP.
 
 ## Configure OpenClaw
 
-Add to `~/.openclaw/openclaw.json`:
+Add to your `openclaw.json`:
 
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://{environment-id}.live.dynatrace.com/api/v2/otlp",
-      "headers": {
-        "Authorization": "Api-Token dt0c01.XXXXXXXX"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Api-Token dt0c01.XXXXXXXX"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
 ```
 
 Replace:
-- `{environment-id}` — Your Dynatrace environment ID (e.g., `abc12345`)
+- `{env-id}` — Your Dynatrace environment ID (e.g., `abc12345`)
 - `dt0c01.XXXXXXXX` — Your API token
 
 ### Dynatrace Managed
@@ -51,14 +60,26 @@ For Dynatrace Managed, use your ActiveGate URL:
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://{your-activegate}/e/{environment-id}/api/v2/otlp",
-      "headers": {
-        "Authorization": "Api-Token dt0c01.XXXXXXXX"
-      },
-      "serviceName": "openclaw-gateway"
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://{your-activegate}/e/{environment-id}/api/v2/otlp",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Api-Token dt0c01.XXXXXXXX"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -67,7 +88,8 @@ For Dynatrace Managed, use your ActiveGate URL:
 ## Restart Gateway
 
 ```bash
-openclaw gateway restart
+rm -rf /tmp/jiti
+systemctl --user restart openclaw-gateway
 ```
 
 ## Verify in Dynatrace

@@ -1,102 +1,62 @@
-# Otel Deep Observability
+# OpenClaw Deep Observability
+
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Deep OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs.
 
-## Two Approaches
+## What is OpenClaw Deep Observability Plugin?
 
-This documentation covers **two complementary approaches** to OpenClaw observability:
+OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrumentation plugin designed specifically for [OpenClaw](https://github.com/openclaw/openclaw) AI agent systems. It provides comprehensive observability into your AI agents' behavior, performance, and security posture.
 
-### 1. Official Diagnostics Plugin (Built-in)
+### Key Capabilities
 
-OpenClaw v2026.2+ includes built-in OTel support via `diagnostics.otel` config. Best for:
-
-- ✅ Operational metrics (tokens, costs, durations)
-- ✅ Gateway health monitoring
-- ✅ Log forwarding
-- ✅ Simple setup (config only)
-
-### 2. Custom Hook-Based Plugin (This Repo)
-
-A plugin that hooks into the agent lifecycle for deeper tracing. Best for:
-
-- ✅ Connected distributed traces
-- ✅ Per-tool-call spans
-- ✅ Request lifecycle visibility
-- ✅ Debugging agent behavior
-
-**Recommendation:** Use both for complete observability.
+- **Deep Tracing**: Captures complete request lifecycles with proper parent-child span hierarchies, allowing you to trace every LLM call, tool execution, and agent interaction end-to-end.
+- **Rich Metrics**: Exposes detailed metrics covering sessions, messages, queues, tokens, LLM operations, tool executions, webhooks, and security events.
+- **Security Detection**: Built-in detection for sensitive file access, prompt injection attempts, and dangerous command executions — all exported as span events for real-time alerting.
+- **Flexible Export**: Supports both HTTP/Protobuf and gRPC protocols for maximum compatibility with OTLP backends like Dynatrace, Grafana Cloud, Jaeger, and more.
+- **Input/Output Capture**: Configurable capture of LLM and tool inputs/outputs for debugging and auditing purposes.
 
 ## Quick Start
 
-### Official Plugin (5 minutes)
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/bilbo-yu/openclaw-deep-observability-plugin.git
+   ```
 
-Add to `~/.openclaw/openclaw.json`:
+2. Add to your `openclaw.json`:
+   ```json
+   {
+     "diagnostics": {
+        "enabled": true
+     },
+     "plugins": {
+       "load": {
+         "paths": ["/path/to/openclaw-observability-plugin"]
+       },
+       "entries": {
+         "otel-deep-observability": {
+           "enabled": true,
+           "config": {
+             "endpoint": "http://localhost:4318",
+             "serviceName": "openclaw-gateway",
+             "resourceAttributes": {
+                  "application.name": "openclaw"
+              }
+           }
+         }
+       }
+     }
+   }
+   ```
 
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true
-    }
-  }
-}
-```
-
-Then restart:
-
-```bash
-openclaw gateway restart
-```
-
-### Custom Plugin (Additional)
-
-1. Clone the repo
-2. Add to `plugins.load.paths`
-3. Configure in `plugins.entries.otel-deep-observability`
-4. Clear jiti cache and restart
+3. Clear cache and restart:
+   ```bash
+   rm -rf /tmp/jiti
+   systemctl --user restart openclaw-gateway
+   ```
 
 See [Getting Started](getting-started.md) for detailed instructions.
-
-## What Gets Captured
-
-### Official Plugin
-
-| Signal | Data |
-|--------|------|
-| **Metrics** | `openclaw.tokens`, `openclaw.cost.usd`, `openclaw.run.duration_ms`, `openclaw.webhook.*`, `openclaw.message.*`, `openclaw.queue.*`, `openclaw.session.*` |
-| **Traces** | Model usage, webhook processing, message processing, stuck sessions |
-| **Logs** | All Gateway logs with severity, subsystem, code location |
-
-### Custom Plugin (Additional)
-
-| Signal | Data |
-|--------|------|
-| **Traces** | `openclaw.request` → `openclaw.agent.turn` → `tool.*` (connected hierarchy) |
-| **Metrics** | `openclaw.llm.tokens.*`, `openclaw.tool.calls`, `openclaw.session.resets` |
-
-## Trace Structure Comparison
-
-**Official Plugin:**
-```
-openclaw.model.usage (standalone span)
-openclaw.webhook.processed (standalone span)
-openclaw.message.processed (standalone span)
-```
-
-**Custom Plugin:**
-```
-openclaw.request (root span - full lifecycle)
-├── openclaw.agent.turn (child)
-│   ├── tool.Read (child)
-│   ├── tool.exec (child)
-│   └── tool.Write (child)
-```
 
 ## Supported Backends
 
@@ -133,7 +93,10 @@ The plugin includes **real-time security detection** for:
 
 Combined with Tetragon kernel monitoring, this provides defense-in-depth security observability.
 
-## Source
+## Acknowledgments
 
-- Official plugin: Built into OpenClaw v2026.2.0+
-- Custom plugin: [dg.starstao.top/ads/otel-deep-observability](https://dg.starstao.top/ads/otel-deep-observability)
+This project is built on top of [openclaw-observability-plugin](https://github.com/henrikrexed/openclaw-observability-plugin) by [@henrikrexed](https://github.com/henrikrexed). Thanks to the original author for the foundational work on the basic plugin framework.
+
+## License
+
+MIT

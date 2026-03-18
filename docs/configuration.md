@@ -1,26 +1,38 @@
 # Configuration
 
-Configure OpenClaw's built-in OpenTelemetry diagnostics via `~/.openclaw/openclaw.json`.
+Configure the OpenClaw Deep Observability Plugin via your `openclaw.json`.
 
 ## Full Configuration Example
 
 ```json
 {
   "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "protocol": "http/protobuf",
-      "headers": {
-        "Authorization": "Api-Token dt0c01.xxx"
-      },
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true,
-      "sampleRate": 1.0,
-      "flushIntervalMs": 5000
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://localhost:4318",
+          "protocol": "http/protobuf",
+          "serviceName": "openclaw-gateway",
+          "headers": {
+            "Authorization": "Api-Token dt0c01.xxx"
+          },
+          "traces": true,
+          "metrics": true,
+          "logs": true,
+          "captureContent": false,
+          "metricsIntervalMs": 60000,
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -28,46 +40,34 @@ Configure OpenClaw's built-in OpenTelemetry diagnostics via `~/.openclaw/opencla
 
 ## Configuration Reference
 
-### `diagnostics`
+### Plugin Options
 
-Top-level diagnostics configuration.
+| Option | Type | Description |
+|--------|------|-------------|
+| `endpoint` | string | OTLP endpoint URL (e.g., `http://localhost:4318` for HTTP, `http://localhost:4317` for gRPC) |
+| `protocol` | string | OTLP export protocol: `"http/protobuf"` or `"grpc"` |
+| `serviceName` | string | OpenTelemetry service name |
+| `headers` | object | Custom headers for OTLP export (e.g., `{"Authorization": "Api-Token xxx"}` for Dynatrace) |
+| `traces` | boolean | Enable trace export |
+| `metrics` | boolean | Enable metrics export |
+| `logs` | boolean | Enable log export |
+| `captureContent` | boolean | Capture prompt/completion content in spans |
+| `metricsIntervalMs` | integer | Metrics export interval in milliseconds (minimum 1000) |
+| `resourceAttributes` | object | Additional OTel resource attributes (e.g., `{"application.name": "openclaw"}`) |
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable the diagnostics system |
-
-### `diagnostics.otel`
-
-OpenTelemetry export configuration.
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable OTel export |
-| `endpoint` | string | — | OTLP endpoint URL (required) |
-| `protocol` | string | `"http/protobuf"` | Protocol: `"http/protobuf"` or `"grpc"` |
-| `headers` | object | `{}` | Custom HTTP headers (e.g., auth tokens) |
-| `serviceName` | string | `"openclaw"` | OTel service name attribute |
-| `traces` | boolean | `true` | Enable trace export |
-| `metrics` | boolean | `true` | Enable metrics export |
-| `logs` | boolean | `false` | Enable log forwarding |
-| `sampleRate` | number | `1.0` | Trace sampling rate (0.0–1.0) |
-| `flushIntervalMs` | number | — | Export flush interval in milliseconds |
+---
 
 ## Endpoint Configuration
 
-### HTTP Protocol (Default)
+### HTTP/Protobuf Protocol (Default)
 
 For OTLP/HTTP endpoints (port 4318):
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "protocol": "http/protobuf"
-    }
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "protocol": "http/protobuf"
   }
 }
 ```
@@ -80,93 +80,57 @@ For OTLP/gRPC endpoints (port 4317):
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4317",
-      "protocol": "grpc"
-    }
+  "config": {
+    "endpoint": "http://localhost:4317",
+    "protocol": "grpc"
   }
 }
 ```
 
-**Note**: gRPC support is experimental.
+---
 
 ## Authentication
-
-### Bearer Token
-
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://api.example.com/otlp",
-      "headers": {
-        "Authorization": "Bearer your-token-here"
-      }
-    }
-  }
-}
-```
 
 ### Dynatrace API Token
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
-      "headers": {
-        "Authorization": "Api-Token dt0c01.xxx..."
-      }
+  "config": {
+    "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
+    "headers": {
+      "Authorization": "Api-Token dt0c01.xxx..."
     }
   }
 }
 ```
 
-### Basic Auth (Grafana Cloud)
+### Grafana Cloud (Basic Auth)
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "https://otlp-gateway-prod-us-central-0.grafana.net/otlp",
-      "headers": {
-        "Authorization": "Basic base64(instanceId:apiKey)"
-      }
+  "config": {
+    "endpoint": "https://otlp-gateway-prod-us-central-0.grafana.net/otlp",
+    "headers": {
+      "Authorization": "Basic base64(instanceId:apiKey)"
     }
   }
 }
 ```
 
-## Sampling
-
-Control trace sampling rate to reduce volume:
+### Bearer Token
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "sampleRate": 0.1
+  "config": {
+    "endpoint": "https://api.example.com/otlp",
+    "headers": {
+      "Authorization": "Bearer your-token-here"
     }
   }
 }
 ```
 
-- `1.0` — Sample all traces (default)
-- `0.5` — Sample 50% of traces
-- `0.1` — Sample 10% of traces
-- `0.0` — Disable trace sampling
+---
 
 ## Selective Export
 
@@ -176,15 +140,11 @@ Enable only specific signals:
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "traces": true,
-      "metrics": false,
-      "logs": false
-    }
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "traces": true,
+    "metrics": false,
+    "logs": false
   }
 }
 ```
@@ -193,15 +153,11 @@ Enable only specific signals:
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "traces": false,
-      "metrics": true,
-      "logs": false
-    }
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "traces": false,
+    "metrics": true,
+    "logs": false
   }
 }
 ```
@@ -210,44 +166,87 @@ Enable only specific signals:
 
 ```json
 {
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://localhost:4318",
-      "traces": false,
-      "metrics": false,
-      "logs": true
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "traces": false,
+    "metrics": false,
+    "logs": true
+  }
+}
+```
+
+---
+
+## Resource Attributes
+
+Add custom attributes to all telemetry:
+
+```json
+{
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "serviceName": "openclaw-gateway",
+    "resourceAttributes": {
+      "application.name": "openclaw",
+      "deployment.environment": "production",
+      "team": "ai-platform"
     }
   }
 }
 ```
 
-## Environment Variables
+---
 
-OpenClaw also respects standard OTel environment variables as fallbacks:
+## Content Capture
 
-| Variable | Description |
-|----------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Default OTLP endpoint |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | Default protocol |
-| `OTEL_SERVICE_NAME` | Default service name |
+Enable capture of LLM prompt/completion content:
 
-Config file values take precedence over environment variables.
+```json
+{
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "captureContent": true
+  }
+}
+```
+
+When enabled, spans will include:
+- `traceloop.entity.input` — The prompt/input text
+- `traceloop.entity.output` — The completion/output text
+
+!!! warning "Privacy Consideration"
+    Content capture may record sensitive user data. Disable in production if privacy is a concern.
+
+---
+
+## Metrics Export Interval
+
+Control how often metrics are exported:
+
+```json
+{
+  "config": {
+    "endpoint": "http://localhost:4318",
+    "metricsIntervalMs": 30000
+  }
+}
+```
+
+- Default: 60000 (60 seconds)
+- Minimum: 1000 (1 second)
+
+---
 
 ## Applying Changes
 
 After modifying configuration:
 
 ```bash
-openclaw gateway restart
+rm -rf /tmp/jiti
+systemctl --user restart openclaw-gateway
 ```
 
-Or trigger a hot reload (if supported):
-
-```bash
-kill -SIGUSR1 $(pgrep -f openclaw-gateway)
-```
+---
 
 ## Troubleshooting
 
@@ -256,7 +255,7 @@ kill -SIGUSR1 $(pgrep -f openclaw-gateway)
 Check the current config:
 
 ```bash
-cat ~/.openclaw/openclaw.json | jq '.diagnostics'
+cat ~/.openclaw/openclaw.json | jq '.plugins.entries."otel-deep-observability"'
 ```
 
 ### Invalid Config Errors?
@@ -273,4 +272,3 @@ Test connectivity:
 
 ```bash
 curl -v http://localhost:4318/v1/traces
-```

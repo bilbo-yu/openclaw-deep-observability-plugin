@@ -1,9 +1,9 @@
 # OpenClaw Deep Observability
 
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://dg.starstao.top/ads/openclaw-observability-plugin/)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📖 **[Full Documentation](https://dg.starstao.top/ads/openclaw-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
+📖 **[Full Documentation](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
 
 ## What is OpenClaw Deep Observability Plugin?
 
@@ -137,7 +137,7 @@ openclaw.agent.turn (root span)
 
 1. Clone this repository:
    ```bash
-   git clone https://dg.starstao.top/ads/openclaw-observability-plugin.git
+   git clone https://github.com/bilbo-yu/openclaw-deep-observability-plugin.git
    ```
 
 2. Add to your `openclaw.json`:
@@ -273,7 +273,7 @@ openclaw.agent.turn (root span)
 | Option | Type | Description |
 |--------|------|-------------|
 | `endpoint` | string | OTLP endpoint URL (e.g., `http://localhost:4318` for HTTP, `http://localhost:4317` for gRPC) |
-| `protocol` | string | OTLP export protocol: `"http"` or `"grpc"` |
+| `protocol` | string | OTLP export protocol: `"http/protobuf"` or `"grpc"` |
 | `serviceName` | string | OpenTelemetry service name |
 | `headers` | object | Custom headers for OTLP export (e.g., `{"Authorization": "Api-Token xxx"}` for Dynatrace) |
 | `traces` | boolean | Enable trace export |

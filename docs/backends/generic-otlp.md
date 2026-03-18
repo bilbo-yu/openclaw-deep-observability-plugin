@@ -6,11 +6,27 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
 
 ```json
 {
-  "config": {
-    "endpoint": "https://api.honeycomb.io",
-    "protocol": "http",
-    "headers": {
-      "x-honeycomb-team": "<YOUR_API_KEY>"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://api.honeycomb.io",
+          "protocol": "http/protobuf",
+          "headers": {
+            "x-honeycomb-team": "<YOUR_API_KEY>"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -20,11 +36,27 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
 
 ```json
 {
-  "config": {
-    "endpoint": "https://otlp.nr-data.net",
-    "protocol": "http",
-    "headers": {
-      "api-key": "<YOUR_INGEST_LICENSE_KEY>"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://otlp.nr-data.net",
+          "protocol": "http/protobuf",
+          "headers": {
+            "api-key": "<YOUR_INGEST_LICENSE_KEY>"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -64,8 +96,25 @@ Point at the local collector:
 
 ```json
 {
-  "config": {
-    "endpoint": "http://localhost:4318"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://localhost:4318",
+          "serviceName": "openclaw-gateway",
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
+    }
   }
 }
 ```
@@ -74,11 +123,27 @@ Point at the local collector:
 
 ```json
 {
-  "config": {
-    "endpoint": "https://ingest.<region>.signoz.cloud:443",
-    "protocol": "http",
-    "headers": {
-      "signoz-access-token": "<YOUR_SIGNOZ_TOKEN>"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "https://ingest.{region}.signoz.cloud:443",
+          "protocol": "http/protobuf",
+          "headers": {
+            "signoz-access-token": "<YOUR_SIGNOZ_TOKEN>"
+          },
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
     }
   }
 }
@@ -88,8 +153,25 @@ Or self-hosted:
 
 ```json
 {
-  "config": {
-    "endpoint": "http://<signoz-host>:4318"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://{signoz-host}:4318",
+          "serviceName": "openclaw-gateway",
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
+    }
   }
 }
 ```
@@ -100,9 +182,26 @@ Jaeger supports OTLP natively since v1.35:
 
 ```json
 {
-  "config": {
-    "endpoint": "http://<jaeger-host>:4318",
-    "protocol": "http"
+  "diagnostics": {
+     "enabled": true
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-observability-plugin"]
+    },
+    "entries": {
+      "otel-deep-observability": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://{jaeger-host}:4318",
+          "protocol": "http/protobuf",
+          "serviceName": "openclaw-gateway",
+          "resourceAttributes": {
+            "application.name": "openclaw"
+          }
+        }
+      }
+    }
   }
 }
 ```

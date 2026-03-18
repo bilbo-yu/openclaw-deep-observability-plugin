@@ -222,15 +222,15 @@ export function initTelemetry(
 
   // Resolve endpoint suffixes for HTTP protocol
   const traceEndpoint =
-    config.protocol === "http"
+    config.protocol !== "grpc"
       ? `${config.endpoint}/v1/traces`
       : config.endpoint;
   const metricsEndpoint =
-    config.protocol === "http"
+    config.protocol !== "grpc"
       ? `${config.endpoint}/v1/metrics`
       : config.endpoint;
   const logsEndpoint =
-    config.protocol === "http"
+    config.protocol !== "grpc"
       ? `${config.endpoint}/v1/logs`
       : config.endpoint;
 
