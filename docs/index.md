@@ -1,6 +1,6 @@
-# OpenClaw Observability
+# Otel Deep Observability
 
-OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs.
+Deep OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs.
 
 ## Two Approaches
 
@@ -58,7 +58,7 @@ openclaw gateway restart
 
 1. Clone the repo
 2. Add to `plugins.load.paths`
-3. Configure in `plugins.entries.otel-observability`
+3. Configure in `plugins.entries.otel-deep-observability`
 4. Clear jiti cache and restart
 
 See [Getting Started](getting-started.md) for detailed instructions.
@@ -136,4 +136,4 @@ Combined with Tetragon kernel monitoring, this provides defense-in-depth securit
 ## Source
 
 - Official plugin: Built into OpenClaw v2026.2.0+
-- Custom plugin: [dg.starstao.top/ads/openclaw-observability-plugin](https://dg.starstao.top/ads/openclaw-observability-plugin)
+- Custom plugin: [dg.starstao.top/ads/otel-deep-observability](https://dg.starstao.top/ads/otel-deep-observability)

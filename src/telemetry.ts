@@ -230,7 +230,8 @@ export function initTelemetry(
       resource,
       spanProcessors: [new BatchSpanProcessor(traceExporter)],
     });
-    tracerProvider.register();
+    // Note: Not registering as global - only used within this plugin
+    // tracerProvider.register();
 
     logger.info(
       `[otel] Trace exporter → ${traceEndpoint} (${config.protocol})`,
@@ -262,9 +263,8 @@ export function initTelemetry(
         }),
       ],
     });
-
-    // Register as global meter provider so metrics.getMeter() returns a real meter
-    metrics.setGlobalMeterProvider(meterProvider);
+    // Note: Not registering as global - only used within this plugin
+    // metrics.setGlobalMeterProvider(meterProvider);
 
     logger.info(
       `[otel] Metrics exporter → ${metricsEndpoint} (${config.protocol}, interval=${config.metricsIntervalMs}ms)`,
@@ -425,8 +425,14 @@ export function initTelemetry(
 
   // ── Instruments ─────────────────────────────────────────────────
 
-  const tracer = trace.getTracer("openclaw-observability", "0.1.0");
-  const meter = metrics.getMeter("openclaw-observability", "0.1.0");
+  // Get tracer/meter from local providers (not global) to isolate this plugin's telemetry
+  const tracer = tracerProvider
+    ? tracerProvider.getTracer("openclaw-observability", "0.1.0")
+    : trace.getTracer("openclaw-observability", "0.1.0"); // no-op fallback
+
+  const meter = meterProvider
+    ? meterProvider.getMeter("openclaw-observability", "0.1.0")
+    : metrics.getMeter("openclaw-observability", "0.1.0"); // no-op fallback
 
   const counters: OtelCounters = {
     llmRequests: meter.createCounter("openclaw.llm.requests", {

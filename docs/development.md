@@ -6,8 +6,8 @@ How to develop, test, and contribute to the plugin.
 
 ```bash
 # Clone
-git clone https://dg.starstao.top/ads/openclaw-observability-plugin.git
-cd openclaw-observability-plugin
+git clone https://dg.starstao.top/ads/otel-deep-observability.git
+cd otel-deep-observability
 
 # Install dependencies
 npm install
@@ -22,7 +22,7 @@ openclaw gateway restart
 ## Project Structure
 
 ```
-openclaw-observability-plugin/
+otel-deep-observability/
 ├── index.ts                    # Plugin entry point
 ├── src/
 │   ├── config.ts               # Configuration parsing
@@ -176,7 +176,7 @@ npm publish --access public
 Users can then install with:
 
 ```bash
-openclaw plugins install @openclaw/otel-observability
+openclaw plugins install @openclaw/otel-deep-observability
 ```
 
 ## Contributing

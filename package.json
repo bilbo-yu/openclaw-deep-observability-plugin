@@ -1,7 +1,7 @@
 {
-  "name": "@openclaw/otel-observability",
+  "name": "@openclaw/otel-deep-observability",
   "version": "0.1.0",
-  "description": "OpenTelemetry observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
+  "description": "OpenTelemetry deep observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
   "type": "module",
   "openclaw": {
     "extensions": [

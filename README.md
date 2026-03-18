@@ -1,9 +1,9 @@
-# OpenClaw Observability
+# OpenClaw Deep Observability
 
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://dg.starstao.top/ads/openclaw-observability-plugin/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-OpenTelemetry observability for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
+OpenTelemetry deep observability for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
 📖 **[Full Documentation](https://dg.starstao.top/ads/openclaw-observability-plugin/)** — Setup guides, configuration reference, and backend examples.
 
@@ -122,7 +122,7 @@ openclaw.request (root span)
          "paths": ["/path/to/openclaw-observability-plugin"]
        },
        "entries": {
-         "otel-observability": {
+         "otel-deep-observability": {
            "enabled": true,
            "config": {
              "endpoint": "http://localhost:4318",

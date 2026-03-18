@@ -55,13 +55,13 @@ For connected traces and per-tool-call visibility, add the custom plugin.
 
 ```bash
 cd ~/.openclaw/extensions
-git clone https://dg.starstao.top/ads/openclaw-observability-plugin.git otel-observability
+git clone https://dg.starstao.top/ads/otel-deep-observability.git otel-deep-observability
 ```
 
 ### Step 2: Install Dependencies
 
 ```bash
-cd otel-observability
+cd otel-deep-observability
 npm install
 ```
 
@@ -73,10 +73,10 @@ Add to your `~/.openclaw/openclaw.json`:
 {
   "plugins": {
     "load": {
-      "paths": ["~/.openclaw/extensions/otel-observability"]
+      "paths": ["~/.openclaw/extensions/otel-deep-observability"]
     },
     "entries": {
-      "otel-observability": {
+      "otel-deep-observability": {
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",
@@ -129,10 +129,10 @@ For complete observability, enable both:
   },
   "plugins": {
     "load": {
-      "paths": ["~/.openclaw/extensions/otel-observability"]
+      "paths": ["~/.openclaw/extensions/otel-deep-observability"]
     },
     "entries": {
-      "otel-observability": {
+      "otel-deep-observability": {
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",

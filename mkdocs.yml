@@ -1,5 +1,5 @@
-site_name: OpenClaw Observability Plugin
-site_description: OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs
+site_name: Otel Deep Observability Plugin
+site_description: Deep OpenTelemetry observability for OpenClaw AI agents — traces, metrics, and logs
 site_url: https://dg.starstao.top/ads/openclaw-observability-plugin
 repo_url: https://dg.starstao.top/ads/openclaw-observability-plugin
 repo_name: ads/openclaw-observability-plugin
