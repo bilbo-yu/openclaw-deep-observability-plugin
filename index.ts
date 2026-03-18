@@ -36,10 +36,10 @@ import { registerHooks } from "./src/hooks.js";
 import { registerDiagnosticsListener, hasDiagnosticsSupport } from "./src/diagnostics.js";
 
 const otelObservabilityPlugin = {
-  id: "otel-observability",
-  name: "OpenTelemetry Observability",
+  id: "otel-deep-observability",
+  name: "OpenTelemetry Deep Observability",
   description:
-    "Connected traces, cost tracking, and metrics for OpenClaw via OpenTelemetry",
+    "Deep traces, cost tracking, and metrics for OpenClaw via OpenTelemetry",
 
   configSchema: {
     parse(value: unknown): OtelObservabilityConfig {
