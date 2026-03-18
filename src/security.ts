@@ -46,9 +46,9 @@ loadSdk();
  * @returns The redacted text, or the original text if SDK is not available
  */
 export function redactText(text: string): string {
-  if (redactSensitiveText) {
-    return redactSensitiveText(text);
-  }
+  // if (redactSensitiveText) {
+  //   return redactSensitiveText(text);
+  // }
   return text;
 }
 

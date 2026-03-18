@@ -581,7 +581,7 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
       attributes: {
         "openclaw.message.channel": channel,
         "openclaw.session.key": sessionKey,
-        "gen_ai.conversation.id": sessionId,
+        "gen_ai.conversation.id": sessionKey,
         "openclaw.message.direction": "inbound",
         "openclaw.message.source": source,
       },

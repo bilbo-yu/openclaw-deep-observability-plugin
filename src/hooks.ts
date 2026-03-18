@@ -565,6 +565,7 @@ export function registerHooks(
             kind: SpanKind.INTERNAL,
             attributes: {
               "gen_ai.agent.id": agentId,
+              "gen_ai.conversation.id": sessionKey,
             },
           },
           parentContext,
@@ -735,13 +736,22 @@ export function registerHooks(
             }
           }
 
-          // Set status based on isError or securityEvent (unified logic)
+          // Set status based on isError, details.status, or securityEvent (unified logic)
           const isToolError =
             message?.is_error === true || message?.isError === true;
-          if (isToolError) {
+          const isDetailsError = message?.details?.status === "error";
+          const hasError = isToolError || isDetailsError;
+
+          // Extract error message from details if available
+          let errorMessage = "Tool execution error";
+          if (isDetailsError && message?.details?.error) {
+            errorMessage = String(message.details.error).slice(0, 500);
+          }
+
+          if (hasError) {
             span.setStatus({
               code: SpanStatusCode.ERROR,
-              message: "Tool execution error",
+              message: errorMessage,
             });
           } else if (
             securityEvent &&
@@ -765,7 +775,7 @@ export function registerHooks(
           span.setAttribute("openclaw.tool.duration_ms", durationMs);
 
           histograms.toolDuration.record(durationMs, {
-            success: !isToolError,
+            success: !hasError,
             "tool.name": toolName,
           });
 
@@ -972,7 +982,7 @@ export function registerHooks(
         const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
         const agentId = event?.agentId || ctx?.agentId || "unknown";
         const durationMs = event?.durationMs;
-        const success = event?.success !== false;
+        let success = event?.success !== false;
         const errorMsg = event?.error;
         const messages: any[] = event?.messages || [];
 
@@ -1032,7 +1042,6 @@ export function registerHooks(
           // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
           // agentSpan.setAttribute("gen_ai.usage.output_tokens", totalOutputTokens);
           // agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
-          agentSpan.setAttribute("openclaw.agent.success", success);
 
           // Cache tokens (custom attributes)
           // if (cacheReadTokens > 0) {
@@ -1147,7 +1156,6 @@ export function registerHooks(
           //   counters.llmRequests.add(1, metricAttrs);
           // }
 
-          let success = true;
           if (errorMsg) {
             agentSpan.setAttribute(
               "openclaw.agent.error",
