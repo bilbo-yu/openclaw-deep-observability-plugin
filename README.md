@@ -49,7 +49,7 @@ This plugin was developed to address these gaps and provide **comprehensive, pro
 - ✅ **Built-in Security Detection**: Automatic detection of sensitive file access, prompt injection, and dangerous commands
 - ✅ **Full Context Propagation**: Proper OTel context flow for distributed tracing scenarios
 
-### Comparison to Official diagnostics-otel Plugin
+### Comparison to Official Diagnostics-Otel Plugin
 
 #### Comprehensive Comparison Summary
 
@@ -61,9 +61,6 @@ This plugin was developed to address these gaps and provide **comprehensive, pro
 | **Protocol Support** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: http/protobuf only <br> This: http/protobuf + gRPC dual protocol |
 | **Security Detection** | ☆ | ⭐⭐⭐⭐⭐ | Official: No security detection <br> This: Built-in sensitive file access, prompt injection, dangerous command detection exported as span events |
 
-**Rating Scale:** ⭐⭐⭐⭐⭐ = Complete/Excellent | ⭐⭐⭐⭐ = Good | ⭐⭐⭐ = Basic | ⭐⭐ = Limited | ⭐ = Minimal | ☆ = Not Supported
-
-**Recommendation:** Use this plugin for complete observability, or combine both for comprehensive coverage.
 
 ---
 
