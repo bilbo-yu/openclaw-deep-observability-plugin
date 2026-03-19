@@ -309,4 +309,4 @@ This project is built on top of [openclaw-observability-plugin](https://github.c
 ---
 ## License
 
-MIT
+Apache 2.0

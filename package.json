@@ -1,16 +1,32 @@
 {
-  "name": "@openclaw/otel-deep-observability",
-  "version": "0.1.0",
+  "name": "openclaw-otel-deep-observability-plugin",
+  "version": "1.0.0",
   "description": "OpenTelemetry deep observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
   "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "openclaw": {
     "extensions": [
       "./index.ts"
     ]
   },
   "scripts": {
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/ index.ts"
+    "lint": "eslint src/ index.ts",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "openclaw",
