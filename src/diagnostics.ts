@@ -33,10 +33,12 @@ import type { TelemetryRuntime } from "./telemetry.js";
 import {
   checkMessageSecurity,
   type SecurityCounters,
-  SecurityEvent,
   redactText,
 } from "./security.js";
 import { OtelObservabilityConfig } from "./config.js";
+import {
+  sessionContextMap,
+} from "./session-context.js";
 
 // Import from OpenClaw plugin SDK (loaded lazily)
 let onDiagnosticEvent: ((listener: (evt: any) => void) => () => void) | null =
@@ -55,52 +57,6 @@ async function loadSdk(): Promise<void> {
     // SDK not available — will use fallback token extraction
   }
 }
-
-/** Security event type */
-// interface SecurityEventResult {
-//   detection: string;
-//   description: string;
-// }
-
-/** Pending tool span with start time for duration calculation */
-export interface PendingToolSpan {
-  span: Span;
-  startTime: number;
-  securityEvent?: SecurityEvent | null;
-}
-
-export interface ToolCallInfo {
-  name: string;
-  arguments?: any;
-}
-
-/** Pending LLM span with start time for duration calculation */
-export interface PendingLlmSpan {
-  span: Span;
-  startTime: number;
-}
-
-/** Map of sessionKey → active agent span (set by hooks.ts) */
-// export const activeAgentSpans = new Map<string, Span>();
-
-/** Active trace context for a session — allows connecting spans into one trace. */
-export interface SessionTraceContext {
-  rootSpan: Span;
-  rootContext: Context;
-  agentSpan?: Span;
-  agentContext?: Context;
-  agentInput?: string;
-  startTime: number;
-  messageInput?: string;
-  messageOutput?: string;
-  pendingToolSpans: Map<string, PendingToolSpan>;
-  // toolCalls: Map<string, ToolCallInfo>;
-  // pendingLlmSpans: Map<string, PendingLlmSpan>;
-  startMessagesLength?: number;
-}
-
-/** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
-export const sessionContextMap = new Map<string, SessionTraceContext>();
 
 /** Tracer instance — set during registerDiagnosticsListener */
 let tracer: ReturnType<typeof trace.getTracer>;
@@ -697,8 +653,6 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
       );
     }
 
-    // Clean up
-    sessionContextMap.delete(sessionKey);
   } catch (error) {
     diagnosticsLogger.error?.(
       `[otel] Error in handleMessageProcessed: ${error}`,

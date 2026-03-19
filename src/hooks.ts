@@ -35,7 +35,7 @@ import {
   sessionContextMap,
   type SessionTraceContext,
   type ToolCallInfo,
-} from "./diagnostics.js";
+} from "./session-context.js";
 import {
   checkToolSecurity,
   checkMessageSecurity,
@@ -111,14 +111,6 @@ export function registerHooks(
   const captureContent = config.captureContent || false;
   const logger = api.logger;
 
-  // ═══════════════════════════════════════════════════════════════════
-  // TYPED HOOKS — registered via api.on() into registry.typedHooks
-  // ═══════════════════════════════════════════════════════════════════
-
-  // ── message_received ─────────────────────────────────────────────
-  // Creates the ROOT span for the entire request lifecycle.
-  // All subsequent spans (agent, tools) become children of this span.
-
   // Build security counters object for detection module
   const securityCounters: SecurityCounters = {
     securityEvents: counters.securityEvents,
@@ -127,6 +119,864 @@ export function registerHooks(
     dangerousCommand: counters.dangerousCommand,
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // TYPED HOOKS — registered via api.on() into registry.typedHooks
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── message_received ─────────────────────────────────────────────
+  // Creates the ROOT span for the entire request lifecycle.
+  // All subsequent spans (agent, tools) become children of this span.
+
+
+  // api.on(
+  //   "message_received",
+  //   async (event: any, ctx: any) => {
+  //     try {
+  //       const channel = event?.channel || "unknown";
+  //       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
+  //       const from = event?.from || event?.senderId || "unknown";
+  //       const messageText = event?.text || event?.message || "";
+
+  //       // Create root span for this request
+  //       const rootSpan = tracer.startSpan("openclaw.request", {
+  //         kind: SpanKind.SERVER,
+  //         attributes: {
+  //           "openclaw.message.channel": channel,
+  //           "openclaw.session.key": sessionKey,
+  //           "openclaw.message.direction": "inbound",
+  //           "openclaw.message.from": from,
+  //         },
+  //       });
+
+  //       // ═══ SECURITY DETECTION 2: Prompt Injection ═══════════════
+  //       if (messageText && typeof messageText === "string" && messageText.length > 0) {
+  //         const securityEvent = checkMessageSecurity(
+  //           messageText,
+  //           rootSpan,
+  //           securityCounters,
+  //           sessionKey
+  //         );
+  //         if (securityEvent) {
+  //           logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
+  //         }
+  //       }
+
+  //       // Store the context so child spans can reference it
+  //       const rootContext = trace.setSpan(context.active(), rootSpan);
+
+  //       sessionContextMap.set(sessionKey, {
+  //         rootSpan,
+  //         rootContext,
+  //         startTime: Date.now(),
+  //       });
+
+  //       // Record message count metric
+  //       counters.messagesReceived.add(1, {
+  //         "openclaw.message.channel": channel,
+  //       });
+
+  //       logger.debug?.(`[otel] Root span started for session=${sessionKey}`);
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
+  //   },
+  //   { priority: 100 } // High priority — run first to establish context
+  // );
+
+  // logger.info("[otel] Registered message_received hook (via api.on)");
+
+  // ── before_agent_start ───────────────────────────────────────────
+  // Creates an "agent turn" child span under the root request span.
+
+  api.on(
+    "before_agent_start",
+    (event: any, ctx: any) => {
+      return handleBeforeAgentStart(event, ctx);
+    },
+    { priority: 90 },
+  );
+  logger.info("[otel] Registered before_agent_start hook (via api.on)");
+    // ── agent_end ────────────────────────────────────────────────────
+  // Ends the agent turn span AND the root request span.
+  // Event shape from OpenClaw:
+  //   event: { messages, success, error?, durationMs }
+  //   ctx:   { agentId, sessionKey, workspaceDir, messageProvider? }
+  // Token usage is embedded in the last assistant message's .usage field.
+
+  api.on(
+    "agent_end",
+    async (event: any, ctx: any) => {
+      handleAgentEnd(event, ctx);
+    },
+    { priority: -100 },
+  );
+
+  logger.info("[otel] Registered agent_end hook (via api.on)");
+  
+  api.on(
+    "before_tool_call",
+    (event: any, ctx: any) => {
+      return handleBeforeToolCall(event, ctx);
+    },
+    { priority: -100 },
+  );
+  logger.info("[otel] Registered before_tool_call hook (via api.on)");
+
+  // ── tool_result_persist ──────────────────────────────────────────
+  // Ends the pending tool span created in before_tool_call.
+  // SYNCHRONOUS — must not return a Promise.
+
+  api.on(
+    "tool_result_persist",
+    (event: any, ctx: any) => {
+      return handleToolResultPersist(event, ctx);
+    },
+    { priority: -100 },
+  );
+
+  logger.info("[otel] Registered tool_result_persist hook (via api.on)");
+
+  // ── llm_input ────────────────────────────────────────────────────
+  // Creates an LLM span for tracking chat operations.
+
+  // api.on(
+  //   "llm_input",
+  //   (event: any, ctx: any) => {
+  //     try {
+  //       const runId = event?.runId;
+  //       const sessionKey = ctx?.sessionKey || "unknown";
+  //       const provider = event?.provider || "unknown";
+  //       const model = event?.model || "unknown";
+  //       const prompt = event?.prompt || "";
+  //       const startTime = Date.now();
+
+  //       // Get parent context — prefer agent turn span, fall back to root
+  //       const sessionCtx = sessionContextMap.get(sessionKey);
+  //       const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
+
+  //       // Create LLM span with GenAI semantic conventions
+  //       const span = tracer.startSpan(
+  //         `chat ${model}`,
+  //         {
+  //           kind: SpanKind.CLIENT,
+  //           attributes: {
+  //             "gen_ai.system": provider,
+  //             "gen_ai.operation.name": "chat",
+  //             "gen_ai.request.model": model,
+  //             "openclaw.session.key": sessionKey,
+  //             "openclaw.run.id": runId,
+  //           },
+  //         },
+  //         parentContext
+  //       );
+
+  //       // Set prompt attributes (user message)
+  //       if (prompt) {
+  //         span.setAttribute("gen_ai.prompt.0.role", "user");
+  //         span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 2048));
+  //       }
+
+  //       // Store span in pendingLlmSpans for later ending in llm_output
+  //       if (sessionCtx) {
+  //         if (!sessionCtx.pendingLlmSpans) {
+  //           sessionCtx.pendingLlmSpans = new Map();
+  //         }
+  //         sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
+  //       }
+
+  //       logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
+
+  //     return undefined;
+  //   },
+  //   { priority: -100 }
+  // );
+  // logger.info("[otel] Registered llm_input hook (via api.on)");
+
+  // // ── llm_output ───────────────────────────────────────────────────
+  // // Ends the pending LLM span created in llm_input.
+
+  // api.on(
+  //   "llm_output",
+  //   (event: any, ctx: any) => {
+  //     try {
+  //       const runId = event?.runId;
+  //       const sessionKey = ctx?.sessionKey || "unknown";
+  //       const model = event?.model || "unknown";
+  //       const lastAssistant = event?.lastAssistant;
+
+  //       // Get session context and pending LLM span
+  //       const sessionCtx = sessionContextMap.get(sessionKey);
+  //       const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
+
+  //       if (pendingLlmSpan) {
+  //         const { span, startTime } = pendingLlmSpan;
+
+  //         // Set response model
+  //         span.setAttribute("gen_ai.response.model", model);
+
+  //         // Set completion attributes (assistant response)
+  //         if (lastAssistant) {
+  //           const role = lastAssistant.role || "assistant";
+  //           span.setAttribute("gen_ai.completion.0.role", role);
+
+  //           // Extract content from lastAssistant
+  //           const contentArray = lastAssistant.content;
+  //           if (contentArray && Array.isArray(contentArray)) {
+  //             // Extract text parts from content array
+  //             const textParts = contentArray
+  //               .filter((c: any) => c.type === "text")
+  //               .map((c: any) => String(c.text || ""));
+  //             const content = textParts.join("\n");
+  //             if (content) {
+  //               span.setAttribute("gen_ai.completion.0.content", content.slice(0, 2048));
+  //             }
+  //           } else if (typeof lastAssistant.content === "string") {
+  //             span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 2048));
+  //           }
+  //         }
+
+  //         // Extract usage from lastAssistant message
+  //         const usage = lastAssistant?.usage;
+  //         if (usage) {
+  //           if (typeof usage.input === "number") {
+  //             span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
+  //           }
+  //           if (typeof usage.output === "number") {
+  //             span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
+  //           }
+  //           if (typeof usage.totalTokens === "number") {
+  //             span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
+  //           }
+  //           if (typeof usage.cacheRead === "number") {
+  //             span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
+  //           }
+  //           if (typeof usage.cacheWrite === "number") {
+  //             span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
+  //           }
+  //         }
+
+  //         // Set span status based on stopReason
+  //         const stopReason = lastAssistant?.stopReason;
+  //         if (stopReason === "stop" || stopReason === "end_turn") {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //         } else if (stopReason) {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //           span.setAttribute("gen_ai.response.stop_reason", stopReason);
+  //         } else {
+  //           span.setStatus({ code: SpanStatusCode.OK });
+  //         }
+
+  //         // Calculate duration
+  //         const durationMs = Date.now() - startTime;
+  //         span.setAttribute("openclaw.llm.duration_ms", durationMs);
+
+  //         // End the span
+  //         span.end();
+
+  //         // Remove from pendingLlmSpans
+  //         if (sessionCtx) {
+  //           sessionCtx.pendingLlmSpans.delete(runId);
+  //         }
+
+  //         logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
+  //       } else {
+  //         logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
+  //       }
+  //     } catch {
+  //       // Never let telemetry errors break the main flow
+  //     }
+
+  //     return undefined;
+  //   },
+  //   { priority: -100 }
+  // );
+  // logger.info("[otel] Registered llm_output hook (via api.on)");
+
+
+
+  // ═══════════════════════════════════════════════════════════════════
+  // EVENT-STREAM HOOKS — registered via api.registerHook()
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Command event hooks ──────────────────────────────────────────
+
+  api.registerHook(
+    ["command:new", "command:reset", "command:stop"],
+    async (event: any) => {
+      handleCommandEvents(event);
+    },
+    {
+      name: "otel-command-events",
+      description: "Records session command spans via OpenTelemetry",
+    },
+  );
+
+  logger.info("[otel] Registered command event hooks (via api.registerHook)");
+
+  // ── Gateway startup hook ─────────────────────────────────────────
+
+  api.registerHook(
+    "gateway:startup",
+    async (event: any) => {
+      handleGatewayStartup();
+    },
+    {
+      name: "otel-gateway-startup",
+      description: "Records gateway startup event via OpenTelemetry",
+    },
+  );
+
+  logger.info("[otel] Registered gateway:startup hook (via api.registerHook)");
+
+  // ── Periodic cleanup ─────────────────────────────────────────────
+  // Safety net: clean up stale session contexts (e.g., if agent_end never fires)
+  setInterval(() => {
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes
+    for (const [key, ctx] of sessionContextMap) {
+      if (now - ctx.startTime > maxAge) {
+        try {
+          ctx.agentSpan?.end();
+          if (ctx.rootSpan !== ctx.agentSpan) ctx.rootSpan?.end();
+        } catch {
+          /* ignore */
+        }
+        sessionContextMap.delete(key);
+        logger.debug?.(
+          `[otel] Cleaned up stale trace context for session=${key}`,
+        );
+      }
+    }
+  }, 60_000);
+
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Hook Handlers
+  // ════════════════════════════════════════════════════════════════════════════
+  function handleBeforeAgentStart(event: any, ctx: any) {
+    try {
+      logger.debug?.(
+        `[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+      );
+      const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
+      const agentId = event?.agentId || ctx?.agentId || "unknown";
+      // const model = event?.model || "unknown";
+      const prompt = event?.prompt;
+      // logger.debug?.(
+      //   `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
+      // );
+      const sessionCtx = sessionContextMap.get(sessionKey);
+      const parentContext = sessionCtx?.rootContext || context.active();
+
+      // Create agent turn span as child of root span
+      const agentSpan = tracer.startSpan(
+        "openclaw.agent.turn",
+        {
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            "gen_ai.agent.id": agentId,
+            "gen_ai.conversation.id": sessionKey,
+          },
+        },
+        parentContext
+      );
+
+      const agentContext = trace.setSpan(parentContext, agentSpan);
+
+      // Store agent span context for tool spans
+      if (sessionCtx) {
+        sessionCtx.agentSpan = agentSpan;
+        sessionCtx.agentContext = agentContext;
+        // Store the length of historical messages before this conversation
+        sessionCtx.startMessagesLength = event?.messages?.length || 0;
+        // record message Input
+        sessionCtx.agentInput = prompt;
+      } else {
+        // No root span (e.g., heartbeat) — create a standalone context
+        sessionContextMap.set(sessionKey, {
+          rootSpan: agentSpan,
+          rootContext: agentContext,
+          agentSpan,
+          agentContext,
+          startTime: Date.now(),
+          pendingToolSpans: new Map(),
+          // toolCalls: new Map(),
+          startMessagesLength: event?.messages?.length || 0,
+          agentInput: prompt,
+        });
+      }
+
+      logger.debug?.(
+        `[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}, startMessagesLength=${event?.messages?.length || 0}`
+      );
+    } catch {
+      logger.warn?.(
+        `[otel] before_agent_start hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+      );
+    }
+
+    // Return undefined — don't modify system prompt
+    return undefined;
+  }
+
+  function handleGatewayStartup() {
+    try {
+      const span = tracer.startSpan("openclaw.gateway.startup", {
+        kind: SpanKind.INTERNAL,
+        attributes: {
+          "openclaw.event.type": "gateway",
+          "openclaw.event.action": "startup",
+        },
+      });
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
+    } catch {
+      logger.warn?.(
+        `[otel] gateway:startup hook failed`
+      );
+    }
+  }
+
+  function handleCommandEvents(event: any) {
+    try {
+      const action = event?.action || "unknown";
+      const sessionKey = event?.sessionKey || "unknown";
+
+      // Get parent context if available
+      const sessionCtx = sessionContextMap.get(sessionKey);
+      const parentContext = sessionCtx?.rootContext || context.active();
+
+      const span = tracer.startSpan(
+        `openclaw.command.${action}`,
+        {
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            "openclaw.command.action": action,
+            "openclaw.command.session_key": sessionKey,
+            "openclaw.command.source": event?.context?.commandSource || "unknown",
+          },
+        },
+        parentContext
+      );
+
+      if (action === "new" || action === "reset") {
+        counters.sessionResets.add(1, {
+          "command.source": event?.context?.commandSource || "unknown",
+        });
+      }
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
+    } catch {
+      logger.warn?.(
+        `[otel] command event hook failed: event=${JSON.stringify(event)}}`
+      );
+    }
+  }
+
+  function handleAgentEnd(event: any, ctx: any) {
+    try {
+      logger.debug?.(
+        `[otel] agent_end event: ${JSON.stringify(event)}, ctx: ${JSON.stringify(ctx)}`
+      );
+      const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
+      const agentId = event?.agentId || ctx?.agentId || "unknown";
+      const durationMs = event?.durationMs;
+      let success = event?.success !== false;
+      const errorMsg = event?.error;
+      const messages: any[] = event?.messages || [];
+
+      // Try to get usage from diagnostic events (includes cost!)
+      // const diagUsage = getPendingUsage(sessionKey);
+      // Fallback: Extract token usage from the messages array
+      // let totalInputTokens = 0;
+      // let totalOutputTokens = 0;
+      // let cacheReadTokens = 0;
+      // let cacheWriteTokens = 0;
+      // let model = "unknown";
+      // let costUsd: number | undefined;
+      // if (diagUsage) {
+      //   // Use diagnostic event data (more accurate, includes cost)
+      //   totalInputTokens = diagUsage.usage.input || 0;
+      //   totalOutputTokens = diagUsage.usage.output || 0;
+      //   cacheReadTokens = diagUsage.usage.cacheRead || 0;
+      //   cacheWriteTokens = diagUsage.usage.cacheWrite || 0;
+      //   model = diagUsage.model || "unknown";
+      //   costUsd = diagUsage.costUsd;
+      //   logger.debug?.(`[otel] agent_end using diagnostic data: cost=$${costUsd?.toFixed(4) || "?"}`);
+      // } else {
+      //   // Fallback: parse messages manually
+      //   for (const msg of messages) {
+      //     if (msg?.role === "assistant" && msg?.usage) {
+      //       const u = msg.usage;
+      //       // pi-ai stores usage as .input/.output (normalized names)
+      //       if (typeof u.input === "number") totalInputTokens += u.input;
+      //       else if (typeof u.inputTokens === "number") totalInputTokens += u.inputTokens;
+      //       else if (typeof u.input_tokens === "number") totalInputTokens += u.input_tokens;
+      //       if (typeof u.output === "number") totalOutputTokens += u.output;
+      //       else if (typeof u.outputTokens === "number") totalOutputTokens += u.outputTokens;
+      //       else if (typeof u.output_tokens === "number") totalOutputTokens += u.output_tokens;
+      //       if (typeof u.cacheRead === "number") cacheReadTokens += u.cacheRead;
+      //       if (typeof u.cacheWrite === "number") cacheWriteTokens += u.cacheWrite;
+      //     }
+      //     if (msg?.role === "assistant" && msg?.model) {
+      //       model = msg.model;
+      //     }
+      //   }
+      // }
+      // const totalTokens = totalInputTokens + totalOutputTokens + cacheReadTokens + cacheWriteTokens;
+      // logger.debug?.(`[otel] agent_end tokens: input=${totalInputTokens}, output=${totalOutputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, model=${model}`);
+      const sessionCtx = sessionContextMap.get(sessionKey);
+
+      // End the agent turn span
+      if (sessionCtx?.agentSpan) {
+        const agentSpan = sessionCtx.agentSpan;
+
+        // Token usage — GenAI semantic convention attributes
+        // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
+        // agentSpan.setAttribute("gen_ai.usage.output_tokens", totalOutputTokens);
+        // agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
+        // Cache tokens (custom attributes)
+        // if (cacheReadTokens > 0) {
+        //   agentSpan.setAttribute("gen_ai.usage.cache_read_tokens", cacheReadTokens);
+        // }
+        // if (cacheWriteTokens > 0) {
+        //   agentSpan.setAttribute("gen_ai.usage.cache_write_tokens", cacheWriteTokens);
+        // }
+        // Cost (from diagnostic events) — this is the key addition!
+        // if (typeof costUsd === "number") {
+        //   agentSpan.setAttribute("openclaw.llm.cost_usd", costUsd);
+        // }
+        // Context window (from diagnostic events)
+        // if (diagUsage?.context?.limit) {
+        //   agentSpan.setAttribute("openclaw.context.limit", diagUsage.context.limit);
+        // }
+        // if (diagUsage?.context?.used) {
+        //   agentSpan.setAttribute("openclaw.context.used", diagUsage.context.used);
+        // }
+        const firstMsg = messages[sessionCtx.startMessagesLength || 0] || {};
+        const lastMsg = messages[messages.length - 1] || {};
+        const input = firstMsg.role === "user" ? firstMsg.content : {};
+        const output = lastMsg.role === "assistant" ? lastMsg.content : {};
+        const inputInfo = parseContent(input);
+        const outputInfo = parseContent(output);
+
+        let securityEvent = null;
+        if (!sessionCtx.agentInput) {
+          sessionCtx.agentInput = inputInfo.content;
+        }
+        if (sessionCtx.agentInput) {
+          if (captureContent) {
+            agentSpan.setAttribute(
+              "traceloop.entity.input",
+              redactText(sessionCtx.agentInput)
+            );
+          }
+          if (!sessionCtx.messageInput) {
+            //use the first user message as root span input
+            sessionCtx.messageInput = sessionCtx.agentInput;
+          }
+          securityEvent = checkMessageSecurity(
+            sessionCtx.agentInput,
+            agentSpan,
+            securityCounters,
+            sessionKey
+          );
+          if (securityEvent) {
+            logger.warn?.(
+              `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`
+            );
+          }
+        }
+        if (outputInfo.content) {
+          if (captureContent) {
+            agentSpan.setAttribute(
+              "traceloop.entity.output",
+              redactText(outputInfo.content)
+            );
+          }
+          sessionCtx.messageOutput = outputInfo.content;
+        }
+
+        // Create LLM spans and tool spans for new messages in this conversation
+        const {
+          inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, totalTokens = 0, model, provider,
+        } = createSpansFromMessages(
+          messages,
+          sessionCtx,
+          sessionKey,
+          agentId
+        );
+        agentSpan.setAttribute("gen_ai.system", provider || "unknown");
+        agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
+        agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
+        agentSpan.setAttribute("gen_ai.response.model", model || "unknown");
+        agentSpan.setAttribute("gen_ai.usage.input_tokens", inputTokens);
+        agentSpan.setAttribute("gen_ai.usage.output_tokens", outputTokens);
+        agentSpan.setAttribute(
+          "gen_ai.usage.cache_read_tokens",
+          cacheReadTokens
+        );
+        agentSpan.setAttribute(
+          "gen_ai.usage.cache_write_tokens",
+          cacheWriteTokens
+        );
+        agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
+        logger.debug?.(
+          `[otel] agent_end tokens: input=${inputTokens}, output=${outputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, total_tokens=${totalTokens}, model=${model}, provider=${provider}`
+        );
+        // Record metrics only if we didn't get them from diagnostics
+        // (diagnostics module already records metrics on model.usage event)
+        // if (!diagUsage) {
+        //   const metricAttrs = {
+        //     "gen_ai.response.model": tokenUsage.model,
+        //     "openclaw.agent.id": agentId,
+        //   };
+        //   counters.tokensPrompt.add(tokenUsage.inputTokens + tokenUsage.cacheReadTokens + tokenUsage.cacheWriteTokens, metricAttrs);
+        //   // histograms.tokenHistogram.record(totalInputTokens + cacheReadTokens + cacheWriteTokens, { ...metricAttrs, "gen_ai.token.type": "input" });
+        //   counters.tokensCompletion.add(tokenUsage.outputTokens, metricAttrs);
+        //   // histograms.tokenHistogram.record(totalOutputTokens, { ...metricAttrs, "gen_ai.token.type": "output" });
+        //   counters.tokensTotal.add(tokenUsage.totalTokens, metricAttrs);
+        //   counters.llmRequests.add(1, metricAttrs);
+        // }
+        if (errorMsg) {
+          agentSpan.setAttribute(
+            "openclaw.agent.error",
+            String(errorMsg).slice(0, 500)
+          );
+          agentSpan.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: String(errorMsg).slice(0, 200),
+          });
+          success = false;
+        } else if (securityEvent &&
+          (securityEvent.severity === "critical" ||
+            securityEvent.severity === "high")) {
+          agentSpan.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
+          });
+        } else {
+          agentSpan.setStatus({ code: SpanStatusCode.OK });
+        }
+        // Record duration histogram
+        if (typeof durationMs === "number") {
+          agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
+          histograms.agentTurnDuration.record(durationMs, {
+            success: String(success),
+            "gen_ai.response.model": model || "unknown",
+            "gen_ai.agent.id": agentId,
+          });
+        }
+
+        agentSpan.end();
+        sessionCtx.agentSpan = undefined;
+      }
+
+      // End the root request span
+      // if (sessionCtx?.rootSpan && sessionCtx.rootSpan !== sessionCtx.agentSpan) {
+      //   const totalMs = Date.now() - sessionCtx.startTime;
+      //   sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
+      //   sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
+      //   sessionCtx.rootSpan.end();
+      // }
+      // Clean up
+      // sessionContextMap.delete(sessionKey);
+      logger.debug?.(`[otel] Trace completed for session=${sessionKey}`);
+    } catch {
+      logger.warn?.(`[otel] agent_end hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+    }
+  }
+
+  function handleToolResultPersist(event: any, ctx: any) {
+    try {
+      logger.debug?.(
+        `[otel] Tool result persist: event=${JSON.stringify(event)}}`
+      );
+      const toolName = event?.toolName || "unknown";
+      const toolCallId = event?.toolCallId || "";
+      const isSynthetic = event?.isSynthetic === true;
+      const sessionKey = ctx?.sessionKey || "unknown";
+
+      // Get session context and pending tool span
+      const sessionCtx = sessionContextMap.get(sessionKey);
+      const pendingToolSpan = sessionCtx?.pendingToolSpans?.get(toolName);
+
+      if (pendingToolSpan) {
+        const { span, startTime, securityEvent } = pendingToolSpan;
+
+        // Add additional attributes
+        span.setAttribute("openclaw.tool.call_id", toolCallId);
+        span.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
+        span.setAttribute("gen_ai.tool.call.id", toolCallId);
+
+        // Inspect the message for result metadata
+        const message = event?.message;
+        if (message) {
+          const contentArray = message?.content;
+          const { totalChars, totalParts, content } = parseContent(contentArray);
+          // Record result_chars and result_parts
+          span.setAttribute("openclaw.tool.result_chars", totalChars);
+          span.setAttribute("openclaw.tool.result_parts", totalParts);
+          // Record tool output
+          if (captureContent && content) {
+            span.setAttribute("traceloop.entity.output", redactText(content));
+          }
+        }
+
+        // Set status based on isError, details.status, or securityEvent (unified logic)
+        const isToolError = message?.is_error === true || message?.isError === true;
+        const isDetailsError = message?.details?.status === "error";
+        const hasError = isToolError || isDetailsError;
+
+        // Extract error message from details if available
+        let errorMessage = "Tool execution error";
+        if (isDetailsError && message?.details?.error) {
+          errorMessage = String(message.details.error).slice(0, 500);
+        }
+
+        if (hasError) {
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: errorMessage,
+          });
+        } else if (securityEvent &&
+          (securityEvent.severity === "critical" ||
+            securityEvent.severity === "high")) {
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
+          });
+        } else {
+          span.setStatus({ code: SpanStatusCode.OK });
+        }
+
+        // End span with correct timestamp
+        const endTime = message?.timestamp || Date.now();
+        let durationMs = endTime - startTime;
+        if (typeof message?.details?.durationMs === "number") {
+          durationMs = message.details.durationMs;
+        }
+        span.setAttribute("openclaw.tool.duration_ms", durationMs);
+
+        histograms.toolDuration.record(durationMs, {
+          success: !hasError,
+          "tool.name": toolName,
+        });
+
+        span.end(endTime);
+
+        // Remove from pendingToolSpans
+        if (sessionCtx) {
+          sessionCtx.pendingToolSpans.delete(toolName);
+        }
+
+        logger.debug?.(
+          `[otel] Tool span ended: tool=${toolName}, session=${sessionKey}, durationMs=${durationMs}`
+        );
+      } else {
+        logger.debug?.(
+          `[otel] No pending tool span found for tool=${toolName}, session=${sessionKey}`
+        );
+      }
+    } catch {
+      logger.warn?.(
+        `[otel] tool_result_persist hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+      );
+    }
+
+    // Return undefined to keep the tool result unchanged
+    return undefined;
+  }
+
+  function handleBeforeToolCall(event: any, ctx: any) {
+    try {
+      logger.debug?.(
+        `[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+      );
+
+      const toolName = event?.toolName || "unknown";
+      const params = event?.params;
+      const sessionKey = ctx?.sessionKey || "unknown";
+      const agentId = ctx?.agentId || "unknown";
+      const startTime = Date.now();
+
+      // Get parent context — prefer agent turn span, fall back to root
+      const sessionCtx = sessionContextMap.get(sessionKey);
+      const parentContext = sessionCtx?.agentContext ||
+        sessionCtx?.rootContext ||
+        context.active();
+
+      // Create tool span as child of agent turn
+      const span = tracer.startSpan(
+        `tool.${toolName}`,
+        {
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": toolName,
+          },
+        },
+        parentContext
+      );
+
+      // Record tool input
+      if (captureContent && params) {
+        if (params.content) {
+          params.content = "***";
+        }
+        const input = JSON.stringify(params).slice(0, 1000);
+        span.setAttribute("traceloop.entity.input", redactText(input));
+      }
+
+      // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
+      logger.debug?.(
+        `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(params)}`
+      );
+      const securityEvent = checkToolSecurity(
+        toolName,
+        params || {},
+        span,
+        securityCounters,
+        sessionKey,
+        agentId
+      );
+      if (securityEvent) {
+        logger.warn?.(
+          `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`
+        );
+      }
+
+      // Store span in pendingToolSpans for later ending in tool_result_persist
+      if (sessionCtx) {
+        sessionCtx.pendingToolSpans.set(toolName, {
+          span,
+          startTime,
+          securityEvent,
+        });
+      }
+
+      logger.debug?.(
+        `[otel] Tool span started: tool=${toolName}, session=${sessionKey}`
+      );
+    } catch {
+      logger.warn?.(
+        `[otel] before_tool_call hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+      );
+    }
+
+    // Return undefined to keep the tool result unchanged
+    return undefined;
+  }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// Utility Functions
+// ════════════════════════════════════════════════════════════════════════════
+  
   /**
    * Create an LLM span from an assistant message.
    *
@@ -480,835 +1330,4 @@ export function registerHooks(
     }
     return tokenUsage;
   }
-  // api.on(
-  //   "message_received",
-  //   async (event: any, ctx: any) => {
-  //     try {
-  //       const channel = event?.channel || "unknown";
-  //       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-  //       const from = event?.from || event?.senderId || "unknown";
-  //       const messageText = event?.text || event?.message || "";
-
-  //       // Create root span for this request
-  //       const rootSpan = tracer.startSpan("openclaw.request", {
-  //         kind: SpanKind.SERVER,
-  //         attributes: {
-  //           "openclaw.message.channel": channel,
-  //           "openclaw.session.key": sessionKey,
-  //           "openclaw.message.direction": "inbound",
-  //           "openclaw.message.from": from,
-  //         },
-  //       });
-
-  //       // ═══ SECURITY DETECTION 2: Prompt Injection ═══════════════
-  //       if (messageText && typeof messageText === "string" && messageText.length > 0) {
-  //         const securityEvent = checkMessageSecurity(
-  //           messageText,
-  //           rootSpan,
-  //           securityCounters,
-  //           sessionKey
-  //         );
-  //         if (securityEvent) {
-  //           logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
-  //         }
-  //       }
-
-  //       // Store the context so child spans can reference it
-  //       const rootContext = trace.setSpan(context.active(), rootSpan);
-
-  //       sessionContextMap.set(sessionKey, {
-  //         rootSpan,
-  //         rootContext,
-  //         startTime: Date.now(),
-  //       });
-
-  //       // Record message count metric
-  //       counters.messagesReceived.add(1, {
-  //         "openclaw.message.channel": channel,
-  //       });
-
-  //       logger.debug?.(`[otel] Root span started for session=${sessionKey}`);
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-  //   },
-  //   { priority: 100 } // High priority — run first to establish context
-  // );
-
-  // logger.info("[otel] Registered message_received hook (via api.on)");
-
-  // ── before_agent_start ───────────────────────────────────────────
-  // Creates an "agent turn" child span under the root request span.
-
-  api.on(
-    "before_agent_start",
-    (event: any, ctx: any) => {
-      try {
-        logger.debug?.(
-          `[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`,
-        );
-        const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-        const agentId = event?.agentId || ctx?.agentId || "unknown";
-        // const model = event?.model || "unknown";
-        const prompt = event?.prompt;
-        // logger.debug?.(
-        //   `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
-        // );
-
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const parentContext = sessionCtx?.rootContext || context.active();
-
-        // Create agent turn span as child of root span
-        const agentSpan = tracer.startSpan(
-          "openclaw.agent.turn",
-          {
-            kind: SpanKind.INTERNAL,
-            attributes: {
-              "gen_ai.agent.id": agentId,
-              "gen_ai.conversation.id": sessionKey,
-            },
-          },
-          parentContext,
-        );
-
-        const agentContext = trace.setSpan(parentContext, agentSpan);
-
-        // Store agent span context for tool spans
-        if (sessionCtx) {
-          sessionCtx.agentSpan = agentSpan;
-          sessionCtx.agentContext = agentContext;
-          // Store the length of historical messages before this conversation
-          sessionCtx.startMessagesLength = event?.messages?.length || 0;
-          // record message Input
-          sessionCtx.agentInput = prompt;
-        } else {
-          // No root span (e.g., heartbeat) — create a standalone context
-          sessionContextMap.set(sessionKey, {
-            rootSpan: agentSpan,
-            rootContext: agentContext,
-            agentSpan,
-            agentContext,
-            startTime: Date.now(),
-            pendingToolSpans: new Map(),
-            // toolCalls: new Map(),
-            startMessagesLength: event?.messages?.length || 0,
-            agentInput: prompt,
-          });
-        }
-
-        logger.debug?.(
-          `[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}, startMessagesLength=${event?.messages?.length || 0}`,
-        );
-      } catch {
-        // Silently ignore
-      }
-
-      // Return undefined — don't modify system prompt
-      return undefined;
-    },
-    { priority: 90 },
-  );
-  logger.info("[otel] Registered before_agent_start hook (via api.on)");
-  api.on(
-    "before_tool_call",
-    (event: any, ctx: any) => {
-      try {
-        logger.debug?.(
-          `[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`,
-        );
-
-        const toolName = event?.toolName || "unknown";
-        const params = event?.params;
-        const sessionKey = ctx?.sessionKey || "unknown";
-        const agentId = ctx?.agentId || "unknown";
-        const startTime = Date.now();
-
-        // Get parent context — prefer agent turn span, fall back to root
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const parentContext =
-          sessionCtx?.agentContext ||
-          sessionCtx?.rootContext ||
-          context.active();
-
-        // Create tool span as child of agent turn
-        const span = tracer.startSpan(
-          `tool.${toolName}`,
-          {
-            kind: SpanKind.INTERNAL,
-            attributes: {
-              "gen_ai.operation.name": "execute_tool",
-              "gen_ai.tool.name": toolName,
-            },
-          },
-          parentContext,
-        );
-
-        // Record tool input
-        if (captureContent && params) {
-          if (params.content) {
-            params.content = "***";
-          }
-          const input = JSON.stringify(params).slice(0, 1000);
-          span.setAttribute("traceloop.entity.input", redactText(input));
-        }
-
-        // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
-        logger.debug?.(
-          `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(params)}`,
-        );
-        const securityEvent = checkToolSecurity(
-          toolName,
-          params || {},
-          span,
-          securityCounters,
-          sessionKey,
-          agentId,
-        );
-        if (securityEvent) {
-          logger.warn?.(
-            `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`,
-          );
-        }
-
-        // Store span in pendingToolSpans for later ending in tool_result_persist
-        if (sessionCtx) {
-          sessionCtx.pendingToolSpans.set(toolName, {
-            span,
-            startTime,
-            securityEvent,
-          });
-        }
-
-        logger.debug?.(
-          `[otel] Tool span started: tool=${toolName}, session=${sessionKey}`,
-        );
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      // Return undefined to keep the tool result unchanged
-      return undefined;
-    },
-    { priority: -100 },
-  );
-  logger.info("[otel] Registered before_tool_call hook (via api.on)");
-
-  // ── tool_result_persist ──────────────────────────────────────────
-  // Ends the pending tool span created in before_tool_call.
-  // SYNCHRONOUS — must not return a Promise.
-
-  api.on(
-    "tool_result_persist",
-    (event: any, ctx: any) => {
-      try {
-        logger.debug?.(
-          `[otel] Tool result persist: event=${JSON.stringify(event)}}`,
-        );
-        const toolName = event?.toolName || "unknown";
-        const toolCallId = event?.toolCallId || "";
-        const isSynthetic = event?.isSynthetic === true;
-        const sessionKey = ctx?.sessionKey || "unknown";
-
-        // Get session context and pending tool span
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const pendingToolSpan = sessionCtx?.pendingToolSpans?.get(toolName);
-
-        if (pendingToolSpan) {
-          const { span, startTime, securityEvent } = pendingToolSpan;
-
-          // Add additional attributes
-          span.setAttribute("openclaw.tool.call_id", toolCallId);
-          span.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
-          span.setAttribute("gen_ai.tool.call.id", toolCallId);
-
-          // Inspect the message for result metadata
-          const message = event?.message;
-          if (message) {
-            const contentArray = message?.content;
-            const { totalChars, totalParts, content } =
-              parseContent(contentArray);
-            // Record result_chars and result_parts
-            span.setAttribute("openclaw.tool.result_chars", totalChars);
-            span.setAttribute("openclaw.tool.result_parts", totalParts);
-            // Record tool output
-            if (captureContent && content) {
-              span.setAttribute("traceloop.entity.output", redactText(content));
-            }
-          }
-
-          // Set status based on isError, details.status, or securityEvent (unified logic)
-          const isToolError =
-            message?.is_error === true || message?.isError === true;
-          const isDetailsError = message?.details?.status === "error";
-          const hasError = isToolError || isDetailsError;
-
-          // Extract error message from details if available
-          let errorMessage = "Tool execution error";
-          if (isDetailsError && message?.details?.error) {
-            errorMessage = String(message.details.error).slice(0, 500);
-          }
-
-          if (hasError) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: errorMessage,
-            });
-          } else if (
-            securityEvent &&
-            (securityEvent.severity === "critical" ||
-              securityEvent.severity === "high")
-          ) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
-            });
-          } else {
-            span.setStatus({ code: SpanStatusCode.OK });
-          }
-
-          // End span with correct timestamp
-          const endTime = message?.timestamp || Date.now();
-          let durationMs = endTime - startTime;
-          if (typeof message?.details?.durationMs === "number") {
-            durationMs = message.details.durationMs;
-          }
-          span.setAttribute("openclaw.tool.duration_ms", durationMs);
-
-          histograms.toolDuration.record(durationMs, {
-            success: !hasError,
-            "tool.name": toolName,
-          });
-
-          span.end(endTime);
-
-          // Remove from pendingToolSpans
-          if (sessionCtx) {
-            sessionCtx.pendingToolSpans.delete(toolName);
-          }
-
-          logger.debug?.(
-            `[otel] Tool span ended: tool=${toolName}, session=${sessionKey}, durationMs=${durationMs}`,
-          );
-        } else {
-          logger.debug?.(
-            `[otel] No pending tool span found for tool=${toolName}, session=${sessionKey}`,
-          );
-        }
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      // Return undefined to keep the tool result unchanged
-      return undefined;
-    },
-    { priority: -100 },
-  );
-
-  logger.info("[otel] Registered tool_result_persist hook (via api.on)");
-
-  // ── llm_input ────────────────────────────────────────────────────
-  // Creates an LLM span for tracking chat operations.
-
-  // api.on(
-  //   "llm_input",
-  //   (event: any, ctx: any) => {
-  //     try {
-  //       const runId = event?.runId;
-  //       const sessionKey = ctx?.sessionKey || "unknown";
-  //       const provider = event?.provider || "unknown";
-  //       const model = event?.model || "unknown";
-  //       const prompt = event?.prompt || "";
-  //       const startTime = Date.now();
-
-  //       // Get parent context — prefer agent turn span, fall back to root
-  //       const sessionCtx = sessionContextMap.get(sessionKey);
-  //       const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
-
-  //       // Create LLM span with GenAI semantic conventions
-  //       const span = tracer.startSpan(
-  //         `chat ${model}`,
-  //         {
-  //           kind: SpanKind.CLIENT,
-  //           attributes: {
-  //             "gen_ai.system": provider,
-  //             "gen_ai.operation.name": "chat",
-  //             "gen_ai.request.model": model,
-  //             "openclaw.session.key": sessionKey,
-  //             "openclaw.run.id": runId,
-  //           },
-  //         },
-  //         parentContext
-  //       );
-
-  //       // Set prompt attributes (user message)
-  //       if (prompt) {
-  //         span.setAttribute("gen_ai.prompt.0.role", "user");
-  //         span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 2048));
-  //       }
-
-  //       // Store span in pendingLlmSpans for later ending in llm_output
-  //       if (sessionCtx) {
-  //         if (!sessionCtx.pendingLlmSpans) {
-  //           sessionCtx.pendingLlmSpans = new Map();
-  //         }
-  //         sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
-  //       }
-
-  //       logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-
-  //     return undefined;
-  //   },
-  //   { priority: -100 }
-  // );
-  // logger.info("[otel] Registered llm_input hook (via api.on)");
-
-  // // ── llm_output ───────────────────────────────────────────────────
-  // // Ends the pending LLM span created in llm_input.
-
-  // api.on(
-  //   "llm_output",
-  //   (event: any, ctx: any) => {
-  //     try {
-  //       const runId = event?.runId;
-  //       const sessionKey = ctx?.sessionKey || "unknown";
-  //       const model = event?.model || "unknown";
-  //       const lastAssistant = event?.lastAssistant;
-
-  //       // Get session context and pending LLM span
-  //       const sessionCtx = sessionContextMap.get(sessionKey);
-  //       const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
-
-  //       if (pendingLlmSpan) {
-  //         const { span, startTime } = pendingLlmSpan;
-
-  //         // Set response model
-  //         span.setAttribute("gen_ai.response.model", model);
-
-  //         // Set completion attributes (assistant response)
-  //         if (lastAssistant) {
-  //           const role = lastAssistant.role || "assistant";
-  //           span.setAttribute("gen_ai.completion.0.role", role);
-
-  //           // Extract content from lastAssistant
-  //           const contentArray = lastAssistant.content;
-  //           if (contentArray && Array.isArray(contentArray)) {
-  //             // Extract text parts from content array
-  //             const textParts = contentArray
-  //               .filter((c: any) => c.type === "text")
-  //               .map((c: any) => String(c.text || ""));
-  //             const content = textParts.join("\n");
-  //             if (content) {
-  //               span.setAttribute("gen_ai.completion.0.content", content.slice(0, 2048));
-  //             }
-  //           } else if (typeof lastAssistant.content === "string") {
-  //             span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 2048));
-  //           }
-  //         }
-
-  //         // Extract usage from lastAssistant message
-  //         const usage = lastAssistant?.usage;
-  //         if (usage) {
-  //           if (typeof usage.input === "number") {
-  //             span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
-  //           }
-  //           if (typeof usage.output === "number") {
-  //             span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
-  //           }
-  //           if (typeof usage.totalTokens === "number") {
-  //             span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
-  //           }
-  //           if (typeof usage.cacheRead === "number") {
-  //             span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
-  //           }
-  //           if (typeof usage.cacheWrite === "number") {
-  //             span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
-  //           }
-  //         }
-
-  //         // Set span status based on stopReason
-  //         const stopReason = lastAssistant?.stopReason;
-  //         if (stopReason === "stop" || stopReason === "end_turn") {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //         } else if (stopReason) {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //           span.setAttribute("gen_ai.response.stop_reason", stopReason);
-  //         } else {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //         }
-
-  //         // Calculate duration
-  //         const durationMs = Date.now() - startTime;
-  //         span.setAttribute("openclaw.llm.duration_ms", durationMs);
-
-  //         // End the span
-  //         span.end();
-
-  //         // Remove from pendingLlmSpans
-  //         if (sessionCtx) {
-  //           sessionCtx.pendingLlmSpans.delete(runId);
-  //         }
-
-  //         logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
-  //       } else {
-  //         logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
-  //       }
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-
-  //     return undefined;
-  //   },
-  //   { priority: -100 }
-  // );
-  // logger.info("[otel] Registered llm_output hook (via api.on)");
-
-  // ── agent_end ────────────────────────────────────────────────────
-  // Ends the agent turn span AND the root request span.
-  // Event shape from OpenClaw:
-  //   event: { messages, success, error?, durationMs }
-  //   ctx:   { agentId, sessionKey, workspaceDir, messageProvider? }
-  // Token usage is embedded in the last assistant message's .usage field.
-
-  api.on(
-    "agent_end",
-    async (event: any, ctx: any) => {
-      try {
-        logger.debug?.(
-          `[otel] agent_end event: ${JSON.stringify(event)}, ctx: ${JSON.stringify(ctx)}`,
-        );
-        const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-        const agentId = event?.agentId || ctx?.agentId || "unknown";
-        const durationMs = event?.durationMs;
-        let success = event?.success !== false;
-        const errorMsg = event?.error;
-        const messages: any[] = event?.messages || [];
-
-        // Try to get usage from diagnostic events (includes cost!)
-        // const diagUsage = getPendingUsage(sessionKey);
-
-        // Fallback: Extract token usage from the messages array
-        // let totalInputTokens = 0;
-        // let totalOutputTokens = 0;
-        // let cacheReadTokens = 0;
-        // let cacheWriteTokens = 0;
-        // let model = "unknown";
-        // let costUsd: number | undefined;
-
-        // if (diagUsage) {
-        //   // Use diagnostic event data (more accurate, includes cost)
-        //   totalInputTokens = diagUsage.usage.input || 0;
-        //   totalOutputTokens = diagUsage.usage.output || 0;
-        //   cacheReadTokens = diagUsage.usage.cacheRead || 0;
-        //   cacheWriteTokens = diagUsage.usage.cacheWrite || 0;
-        //   model = diagUsage.model || "unknown";
-        //   costUsd = diagUsage.costUsd;
-        //   logger.debug?.(`[otel] agent_end using diagnostic data: cost=$${costUsd?.toFixed(4) || "?"}`);
-        // } else {
-        //   // Fallback: parse messages manually
-        //   for (const msg of messages) {
-        //     if (msg?.role === "assistant" && msg?.usage) {
-        //       const u = msg.usage;
-        //       // pi-ai stores usage as .input/.output (normalized names)
-        //       if (typeof u.input === "number") totalInputTokens += u.input;
-        //       else if (typeof u.inputTokens === "number") totalInputTokens += u.inputTokens;
-        //       else if (typeof u.input_tokens === "number") totalInputTokens += u.input_tokens;
-
-        //       if (typeof u.output === "number") totalOutputTokens += u.output;
-        //       else if (typeof u.outputTokens === "number") totalOutputTokens += u.outputTokens;
-        //       else if (typeof u.output_tokens === "number") totalOutputTokens += u.output_tokens;
-
-        //       if (typeof u.cacheRead === "number") cacheReadTokens += u.cacheRead;
-        //       if (typeof u.cacheWrite === "number") cacheWriteTokens += u.cacheWrite;
-        //     }
-        //     if (msg?.role === "assistant" && msg?.model) {
-        //       model = msg.model;
-        //     }
-        //   }
-        // }
-
-        // const totalTokens = totalInputTokens + totalOutputTokens + cacheReadTokens + cacheWriteTokens;
-        // logger.debug?.(`[otel] agent_end tokens: input=${totalInputTokens}, output=${totalOutputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, model=${model}`);
-
-        const sessionCtx = sessionContextMap.get(sessionKey);
-
-        // End the agent turn span
-        if (sessionCtx?.agentSpan) {
-          const agentSpan = sessionCtx.agentSpan;
-
-          // Token usage — GenAI semantic convention attributes
-          // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
-          // agentSpan.setAttribute("gen_ai.usage.output_tokens", totalOutputTokens);
-          // agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
-
-          // Cache tokens (custom attributes)
-          // if (cacheReadTokens > 0) {
-          //   agentSpan.setAttribute("gen_ai.usage.cache_read_tokens", cacheReadTokens);
-          // }
-          // if (cacheWriteTokens > 0) {
-          //   agentSpan.setAttribute("gen_ai.usage.cache_write_tokens", cacheWriteTokens);
-          // }
-
-          // Cost (from diagnostic events) — this is the key addition!
-          // if (typeof costUsd === "number") {
-          //   agentSpan.setAttribute("openclaw.llm.cost_usd", costUsd);
-          // }
-
-          // Context window (from diagnostic events)
-          // if (diagUsage?.context?.limit) {
-          //   agentSpan.setAttribute("openclaw.context.limit", diagUsage.context.limit);
-          // }
-          // if (diagUsage?.context?.used) {
-          //   agentSpan.setAttribute("openclaw.context.used", diagUsage.context.used);
-          // }
-
-          const firstMsg = messages[sessionCtx.startMessagesLength || 0] || {};
-          const lastMsg = messages[messages.length - 1] || {};
-          const input = firstMsg.role === "user" ? firstMsg.content : {};
-          const output = lastMsg.role === "assistant" ? lastMsg.content : {};
-          const inputInfo = parseContent(input);
-          const outputInfo = parseContent(output);
-
-          let securityEvent = null;
-          if (!sessionCtx.agentInput) {
-            sessionCtx.agentInput = inputInfo.content;
-          }
-          if (sessionCtx.agentInput) {
-            if (captureContent) {
-              agentSpan.setAttribute(
-                "traceloop.entity.input",
-                redactText(sessionCtx.agentInput),
-              );
-            }
-            if (!sessionCtx.messageInput) {
-              //use the first user message as root span input
-              sessionCtx.messageInput = sessionCtx.agentInput;
-            }
-            securityEvent = checkMessageSecurity(
-              sessionCtx.agentInput,
-              agentSpan,
-              securityCounters,
-              sessionKey,
-            );
-            if (securityEvent) {
-              logger.warn?.(
-                `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`,
-              );
-            }
-          }
-          if (outputInfo.content) {
-            if (captureContent) {
-              agentSpan.setAttribute(
-                "traceloop.entity.output",
-                redactText(outputInfo.content),
-              );
-            }
-            sessionCtx.messageOutput = outputInfo.content;
-          }
-
-          // Create LLM spans and tool spans for new messages in this conversation
-          const {
-            inputTokens = 0,
-            outputTokens = 0,
-            cacheReadTokens = 0,
-            cacheWriteTokens = 0,
-            totalTokens = 0,
-            model,
-            provider,
-          } = createSpansFromMessages(
-            messages,
-            sessionCtx,
-            sessionKey,
-            agentId,
-          );
-          agentSpan.setAttribute("gen_ai.system", provider || "unknown");
-          agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
-          agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
-          agentSpan.setAttribute("gen_ai.response.model", model || "unknown");
-          agentSpan.setAttribute("gen_ai.usage.input_tokens", inputTokens);
-          agentSpan.setAttribute("gen_ai.usage.output_tokens", outputTokens);
-          agentSpan.setAttribute(
-            "gen_ai.usage.cache_read_tokens",
-            cacheReadTokens,
-          );
-          agentSpan.setAttribute(
-            "gen_ai.usage.cache_write_tokens",
-            cacheWriteTokens,
-          );
-          agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
-          logger.debug?.(
-            `[otel] agent_end tokens: input=${inputTokens}, output=${outputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, total_tokens=${totalTokens}, model=${model}, provider=${provider}`,
-          );
-          // Record metrics only if we didn't get them from diagnostics
-          // (diagnostics module already records metrics on model.usage event)
-          // if (!diagUsage) {
-          //   const metricAttrs = {
-          //     "gen_ai.response.model": tokenUsage.model,
-          //     "openclaw.agent.id": agentId,
-          //   };
-          //   counters.tokensPrompt.add(tokenUsage.inputTokens + tokenUsage.cacheReadTokens + tokenUsage.cacheWriteTokens, metricAttrs);
-          //   // histograms.tokenHistogram.record(totalInputTokens + cacheReadTokens + cacheWriteTokens, { ...metricAttrs, "gen_ai.token.type": "input" });
-          //   counters.tokensCompletion.add(tokenUsage.outputTokens, metricAttrs);
-          //   // histograms.tokenHistogram.record(totalOutputTokens, { ...metricAttrs, "gen_ai.token.type": "output" });
-          //   counters.tokensTotal.add(tokenUsage.totalTokens, metricAttrs);
-          //   counters.llmRequests.add(1, metricAttrs);
-          // }
-
-          if (errorMsg) {
-            agentSpan.setAttribute(
-              "openclaw.agent.error",
-              String(errorMsg).slice(0, 500),
-            );
-            agentSpan.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: String(errorMsg).slice(0, 200),
-            });
-            success = false;
-          } else if (
-            securityEvent &&
-            (securityEvent.severity === "critical" ||
-              securityEvent.severity === "high")
-          ) {
-            agentSpan.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
-            });
-          } else {
-            agentSpan.setStatus({ code: SpanStatusCode.OK });
-          }
-          // Record duration histogram
-          if (typeof durationMs === "number") {
-            agentSpan.setAttribute("openclaw.agent.duration_ms", durationMs);
-            histograms.agentTurnDuration.record(durationMs, {
-              success: String(success),
-              "gen_ai.response.model": model || "unknown",
-              "gen_ai.agent.id": agentId,
-            });
-          }
-
-          agentSpan.end();
-          sessionCtx.agentSpan = undefined;
-        }
-
-        // End the root request span
-        // if (sessionCtx?.rootSpan && sessionCtx.rootSpan !== sessionCtx.agentSpan) {
-        //   const totalMs = Date.now() - sessionCtx.startTime;
-        //   sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
-        //   sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
-        //   sessionCtx.rootSpan.end();
-        // }
-
-        // Clean up
-        // sessionContextMap.delete(sessionKey);
-
-        logger.debug?.(`[otel] Trace completed for session=${sessionKey}`);
-      } catch {
-        // Silently ignore
-      }
-    },
-    { priority: -100 },
-  );
-
-  logger.info("[otel] Registered agent_end hook (via api.on)");
-
-  // ═══════════════════════════════════════════════════════════════════
-  // EVENT-STREAM HOOKS — registered via api.registerHook()
-  // ═══════════════════════════════════════════════════════════════════
-
-  // ── Command event hooks ──────────────────────────────────────────
-
-  api.registerHook(
-    ["command:new", "command:reset", "command:stop"],
-    async (event: any) => {
-      try {
-        const action = event?.action || "unknown";
-        const sessionKey = event?.sessionKey || "unknown";
-
-        // Get parent context if available
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const parentContext = sessionCtx?.rootContext || context.active();
-
-        const span = tracer.startSpan(
-          `openclaw.command.${action}`,
-          {
-            kind: SpanKind.INTERNAL,
-            attributes: {
-              "openclaw.command.action": action,
-              "openclaw.command.session_key": sessionKey,
-              "openclaw.command.source":
-                event?.context?.commandSource || "unknown",
-            },
-          },
-          parentContext,
-        );
-
-        if (action === "new" || action === "reset") {
-          counters.sessionResets.add(1, {
-            "command.source": event?.context?.commandSource || "unknown",
-          });
-        }
-
-        span.setStatus({ code: SpanStatusCode.OK });
-        span.end();
-      } catch {
-        // Silently ignore telemetry errors
-      }
-    },
-    {
-      name: "otel-command-events",
-      description: "Records session command spans via OpenTelemetry",
-    },
-  );
-
-  logger.info("[otel] Registered command event hooks (via api.registerHook)");
-
-  // ── Gateway startup hook ─────────────────────────────────────────
-
-  api.registerHook(
-    "gateway:startup",
-    async (event: any) => {
-      try {
-        const span = tracer.startSpan("openclaw.gateway.startup", {
-          kind: SpanKind.INTERNAL,
-          attributes: {
-            "openclaw.event.type": "gateway",
-            "openclaw.event.action": "startup",
-          },
-        });
-        span.setStatus({ code: SpanStatusCode.OK });
-        span.end();
-      } catch {
-        // Silently ignore
-      }
-    },
-    {
-      name: "otel-gateway-startup",
-      description: "Records gateway startup event via OpenTelemetry",
-    },
-  );
-
-  logger.info("[otel] Registered gateway:startup hook (via api.registerHook)");
-
-  // ── Periodic cleanup ─────────────────────────────────────────────
-  // Safety net: clean up stale session contexts (e.g., if agent_end never fires)
-  setInterval(() => {
-    const now = Date.now();
-    const maxAge = 5 * 60 * 1000; // 5 minutes
-    for (const [key, ctx] of sessionContextMap) {
-      if (now - ctx.startTime > maxAge) {
-        try {
-          ctx.agentSpan?.end();
-          if (ctx.rootSpan !== ctx.agentSpan) ctx.rootSpan?.end();
-        } catch {
-          /* ignore */
-        }
-        sessionContextMap.delete(key);
-        logger.debug?.(
-          `[otel] Cleaned up stale trace context for session=${key}`,
-        );
-      }
-    }
-  }, 60_000);
 }
