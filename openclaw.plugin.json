@@ -2,7 +2,7 @@
   "id": "openclaw-deep-observability-plugin",
   "name": "Otel Deep Observability Plugin",
   "description": "Deep traces, metrics, and logs for OpenClaw using OpenTelemetry",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "uiHints": {
     "endpoint": {
       "label": "OTLP Endpoint",
