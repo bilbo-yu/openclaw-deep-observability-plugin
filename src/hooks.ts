@@ -710,38 +710,24 @@ export function registerHooks(
           sessionKey,
           agentId
         );
-        agentSpan.setAttribute("gen_ai.system", provider || "unknown");
-        agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
-        agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
-        agentSpan.setAttribute("gen_ai.response.model", model || "unknown");
-        agentSpan.setAttribute("gen_ai.usage.input_tokens", inputTokens);
-        agentSpan.setAttribute("gen_ai.usage.output_tokens", outputTokens);
-        agentSpan.setAttribute(
-          "gen_ai.usage.cache_read_tokens",
-          cacheReadTokens
-        );
-        agentSpan.setAttribute(
-          "gen_ai.usage.cache_write_tokens",
-          cacheWriteTokens
-        );
-        agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
+        // agentSpan.setAttribute("gen_ai.system", provider || "unknown");
+        // agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
+        // agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
+        // agentSpan.setAttribute("gen_ai.response.model", model || "unknown");
+        // agentSpan.setAttribute("gen_ai.usage.input_tokens", inputTokens);
+        // agentSpan.setAttribute("gen_ai.usage.output_tokens", outputTokens);
+        // agentSpan.setAttribute(
+        //   "gen_ai.usage.cache_read_tokens",
+        //   cacheReadTokens
+        // );
+        // agentSpan.setAttribute(
+        //   "gen_ai.usage.cache_write_tokens",
+        //   cacheWriteTokens
+        // );
+        // agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
         logger.debug?.(
           `[otel] agent_end tokens: input=${inputTokens}, output=${outputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, total_tokens=${totalTokens}, model=${model}, provider=${provider}`
         );
-        // Record metrics only if we didn't get them from diagnostics
-        // (diagnostics module already records metrics on model.usage event)
-        // if (!diagUsage) {
-        //   const metricAttrs = {
-        //     "gen_ai.response.model": tokenUsage.model,
-        //     "openclaw.agent.id": agentId,
-        //   };
-        //   counters.tokensPrompt.add(tokenUsage.inputTokens + tokenUsage.cacheReadTokens + tokenUsage.cacheWriteTokens, metricAttrs);
-        //   // histograms.tokenHistogram.record(totalInputTokens + cacheReadTokens + cacheWriteTokens, { ...metricAttrs, "gen_ai.token.type": "input" });
-        //   counters.tokensCompletion.add(tokenUsage.outputTokens, metricAttrs);
-        //   // histograms.tokenHistogram.record(totalOutputTokens, { ...metricAttrs, "gen_ai.token.type": "output" });
-        //   counters.tokensTotal.add(tokenUsage.totalTokens, metricAttrs);
-        //   counters.llmRequests.add(1, metricAttrs);
-        // }
         if (errorMsg) {
           agentSpan.setAttribute(
             "openclaw.agent.error",
