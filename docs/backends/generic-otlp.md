@@ -10,13 +10,16 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://api.honeycomb.io",
           "protocol": "http/protobuf",
+          "captureContent": true,
           "headers": {
             "x-honeycomb-team": "<YOUR_API_KEY>"
           },
@@ -38,13 +41,16 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://otlp.nr-data.net",
           "protocol": "http/protobuf",
+          "captureContent": true,
           "headers": {
             "api-key": "<YOUR_INGEST_LICENSE_KEY>"
           },
@@ -96,13 +102,16 @@ Point at the local collector:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "resourceAttributes": {
             "application.name": "openclaw"
           }
@@ -121,13 +130,16 @@ Point at the local collector:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://ingest.{region}.signoz.cloud:443",
           "protocol": "http/protobuf",
+          "captureContent": true,
           "headers": {
             "signoz-access-token": "<YOUR_SIGNOZ_TOKEN>"
           },
@@ -149,13 +161,16 @@ Or self-hosted:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://{signoz-host}:4318",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "resourceAttributes": {
             "application.name": "openclaw"
           }
@@ -176,7 +191,9 @@ Jaeger supports OTLP natively since v1.35:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
@@ -184,6 +201,7 @@ Jaeger supports OTLP natively since v1.35:
           "endpoint": "http://{jaeger-host}:4318",
           "protocol": "http/protobuf",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "resourceAttributes": {
             "application.name": "openclaw"
           }

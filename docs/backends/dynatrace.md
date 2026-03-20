@@ -27,13 +27,16 @@ Add to your `openclaw.json`:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "headers": {
             "Authorization": "Api-Token dt0c01.XXXXXXXX"
           },
@@ -61,13 +64,16 @@ For Dynatrace Managed, use your ActiveGate URL:
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://{your-activegate}/e/{environment-id}/api/v2/otlp",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "headers": {
             "Authorization": "Api-Token dt0c01.XXXXXXXX"
           },

@@ -17,13 +17,16 @@ Export OpenClaw traces to **Grafana Tempo** and metrics to **Grafana Mimir** (or
      "enabled": true
   },
   "plugins": {
-    
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
           "serviceName": "openclaw-gateway",
+          "captureContent": true,
           "headers": {
             "Authorization": "Basic {base64-credentials}"
           },

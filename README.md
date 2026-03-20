@@ -68,7 +68,7 @@ For a detailed comparison with the official plugin, see [Comparison to Official 
 
 1. Clone this repository:
    ```bash
-   openclaw gateway install openclaw-deep-observability-plugin
+   openclaw plugins install openclaw-deep-observability-plugin
    ```
 
 2. Add to your `openclaw.json`:
@@ -78,12 +78,16 @@ For a detailed comparison with the official plugin, see [Comparison to Official 
         "enabled": true
      },
      "plugins": {
+        "allow": [
+          "openclaw-deep-observability-plugin"
+        ],
        "entries": {
          "openclaw-deep-observability-plugin": {
            "enabled": true,
            "config": {
              "endpoint": "http://localhost:4318",
              "serviceName": "openclaw-gateway",
+             "captureContent": true,
              "resourceAttributes": {
                   "application.name": "openclaw"
               }

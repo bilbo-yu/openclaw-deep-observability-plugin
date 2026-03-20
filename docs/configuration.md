@@ -10,6 +10,9 @@ Configure the OpenClaw Deep Observability Plugin via your `openclaw.json`.
      "enabled": true
   },
   "plugins": {
+    "allow": [
+      "openclaw-deep-observability-plugin"
+    ],
     "entries": {
       "openclaw-deep-observability-plugin": {
         "enabled": true,
@@ -23,7 +26,7 @@ Configure the OpenClaw Deep Observability Plugin via your `openclaw.json`.
           "traces": true,
           "metrics": true,
           "logs": true,
-          "captureContent": false,
+          "captureContent": true,
           "metricsIntervalMs": 60000,
           "resourceAttributes": {
             "application.name": "openclaw"

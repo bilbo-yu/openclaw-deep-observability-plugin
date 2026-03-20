@@ -21,7 +21,7 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
 
 1. Clone this repository:
    ```bash
-   openclaw gateway install openclaw-deep-observability-plugin
+   openclaw plugins install openclaw-deep-observability-plugin
    ```
 
 2. Add to your `openclaw.json`:
@@ -31,12 +31,16 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
         "enabled": true
      },
      "plugins": {
+       "allow": [
+          "openclaw-deep-observability-plugin"
+        ],
        "entries": {
          "openclaw-deep-observability-plugin": {
            "enabled": true,
            "config": {
              "endpoint": "http://localhost:4318",
              "serviceName": "openclaw-gateway",
+             "captureContent": true,
              "resourceAttributes": {
                   "application.name": "openclaw"
               }
