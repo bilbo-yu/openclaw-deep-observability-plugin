@@ -2,7 +2,7 @@
   "id": "openclaw-deep-observability-plugin",
   "name": "Otel Deep Observability Plugin",
   "description": "Deep traces, metrics, and logs for OpenClaw using OpenTelemetry",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "uiHints": {
     "endpoint": {
       "label": "OTLP Endpoint",
@@ -10,7 +10,7 @@
     },
     "protocol": {
       "label": "OTLP Protocol",
-      "help": "Use 'http' for OTLP/HTTP (port 4318) or 'grpc' for OTLP/gRPC (port 4317)"
+      "help": "Use 'http/protobuf' for OTLP/HTTP (port 4318) or 'grpc' for OTLP/gRPC (port 4317)"
     },
     "serviceName": {
       "label": "Service Name",
@@ -52,7 +52,7 @@
       },
       "protocol": {
         "type": "string",
-        "enum": ["http", "grpc"],
+        "enum": ["http/protobuf", "grpc"],
         "description": "OTLP export protocol"
       },
       "serviceName": {

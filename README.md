@@ -3,7 +3,7 @@
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📖 **[Full Documentation](docs/index.md)** — Setup guides, configuration reference, and backend examples.
+📖 **[Full Documentation](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/blob/main/docs/index.md)** — Setup guides, configuration reference, and backend examples.
 
 ## What is OpenClaw Deep Observability Plugin?
 
@@ -60,18 +60,24 @@ This plugin was developed to address these gaps and provide **comprehensive, pro
 
 
 
-For a detailed comparison with the official plugin, see [Comparison to Official Plugin](./docs/comparison.md).
+For a detailed comparison with the official plugin, see [Comparison to Official Plugin](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/blob/main/docs/comparison.md).
 
 ---
 
 ## Installation
+There are two ways to install the plugin:
+### Quick Installation
+```bash
+npx -y openclaw-deep-observability-tools install
+```
 
-1. Clone this repository:
+### Manual Installation
+1. Install the plugin:
    ```bash
    openclaw plugins install openclaw-deep-observability-plugin
    ```
 
-2. Add to your `openclaw.json`:
+2. Update your `openclaw.json`:
    ```json
    {
      "diagnostics": {
@@ -97,7 +103,6 @@ For a detailed comparison with the official plugin, see [Comparison to Official 
      }
    }
    ```
-Please refer to [Configurations for Different Backends](docs/backends/index.md)
 
 3. Restart openclaw gateway:
    ```bash
@@ -143,6 +148,7 @@ openclaw.request (root span)
 | `metricsIntervalMs` | integer | Metrics export interval in milliseconds (minimum 1000) |
 | `resourceAttributes` | object | Additional OTel resource attributes (e.g., `{"application.name": "openclaw"}`) |
 
+Please refer to [Configuration Reference](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/blob/main/docs/configuration.md)
 
 ---
 

@@ -18,20 +18,26 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
 - **Input/Output Capture**: Configurable capture of LLM and tool inputs/outputs for debugging and auditing purposes.
 
 ## Quick Start
+There are two ways to install the plugin:
+### Quick Installation
+```bash
+npx -y openclaw-deep-observability-tools install
+```
 
-1. Clone this repository:
+### Manual Installation
+1. Install the plugin:
    ```bash
    openclaw plugins install openclaw-deep-observability-plugin
    ```
 
-2. Add to your `openclaw.json`:
+2. Update your `openclaw.json`:
    ```json
    {
      "diagnostics": {
         "enabled": true
      },
      "plugins": {
-       "allow": [
+        "allow": [
           "openclaw-deep-observability-plugin"
         ],
        "entries": {
@@ -55,6 +61,7 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
    ```bash
    openclaw gateway restart
    ```
+
 
 
 ## Supported Backends
