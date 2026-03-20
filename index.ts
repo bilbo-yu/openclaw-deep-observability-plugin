@@ -13,7 +13,7 @@
  *   {
  *     "plugins": {
  *       "entries": {
- *         "otel-deep-observability": {
+ *         "openclaw-deep-observability-plugin": {
  *           "enabled": true,
  *           "config": {
  *             "endpoint": "http://localhost:4318",
@@ -37,7 +37,7 @@ import { registerHooks } from "./src/hooks.js";
 import { registerDiagnosticsListener, hasDiagnosticsSupport } from "./src/diagnostics.js";
 
 const otelObservabilityPlugin = {
-  id: "otel-deep-observability",
+  id: "openclaw-deep-observability-plugin",
   name: "OpenTelemetry Deep Observability",
   description:
     "Deep traces, cost tracking, and metrics for OpenClaw via OpenTelemetry",
@@ -103,7 +103,7 @@ const otelObservabilityPlugin = {
     // ── Background service ──────────────────────────────────────────
 
     api.registerService({
-      id: "otel-deep-observability",
+      id: "openclaw-deep-observability-plugin",
 
       start: async () => {
         logger.info("[otel] Starting OpenTelemetry deep observability...");
