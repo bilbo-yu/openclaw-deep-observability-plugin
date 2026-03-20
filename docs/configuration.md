@@ -10,11 +10,8 @@ Configure the OpenClaw Deep Observability Plugin via your `openclaw.json`.
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",
@@ -255,7 +252,7 @@ openclaw gateway restart
 Check the current config:
 
 ```bash
-cat ~/.openclaw/openclaw.json | jq '.plugins.entries."otel-deep-observability"'
+cat ~/.openclaw/openclaw.json | jq '.plugins.entries."openclaw-deep-observability-plugin"'
 ```
 
 ### Invalid Config Errors?

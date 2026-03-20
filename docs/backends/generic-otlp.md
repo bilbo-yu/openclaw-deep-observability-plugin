@@ -10,11 +10,9 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://api.honeycomb.io",
@@ -40,11 +38,9 @@ Any backend that supports OTLP (OpenTelemetry Protocol) can receive data from th
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://otlp.nr-data.net",
@@ -100,11 +96,9 @@ Point at the local collector:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",
@@ -127,11 +121,9 @@ Point at the local collector:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://ingest.{region}.signoz.cloud:443",
@@ -157,11 +149,9 @@ Or self-hosted:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://{signoz-host}:4318",
@@ -186,11 +176,9 @@ Jaeger supports OTLP natively since v1.35:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "http://{jaeger-host}:4318",

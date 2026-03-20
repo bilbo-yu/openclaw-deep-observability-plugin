@@ -17,11 +17,9 @@ Export OpenClaw traces to **Grafana Tempo** and metrics to **Grafana Mimir** (or
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://otlp-gateway-{region}.grafana.net/otlp",
@@ -147,7 +145,7 @@ service:
 1. Go to **Explore**
 2. Select the **Tempo** data source
 3. Search by service name: `openclaw-gateway`
-4. Or search by span name: `openclaw.agent.turn` or `tool.*`
+4. Or search by span name: `openclaw.agent.*` or `tool.*`
 
 ### Example Dashboard Panels
 

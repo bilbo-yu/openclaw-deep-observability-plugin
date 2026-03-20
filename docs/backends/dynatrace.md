@@ -27,11 +27,9 @@ Add to your `openclaw.json`:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://{env-id}.live.dynatrace.com/api/v2/otlp",
@@ -63,11 +61,9 @@ For Dynatrace Managed, use your ActiveGate URL:
      "enabled": true
   },
   "plugins": {
-    "load": {
-      "paths": ["/path/to/openclaw-deep-observability-plugin"]
-    },
+    
     "entries": {
-      "otel-deep-observability": {
+      "openclaw-deep-observability-plugin": {
         "enabled": true,
         "config": {
           "endpoint": "https://{your-activegate}/e/{environment-id}/api/v2/otlp",

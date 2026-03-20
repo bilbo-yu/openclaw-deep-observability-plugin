@@ -162,16 +162,36 @@ The `total_tokens` is the sum of all types. Some backends may calculate it diffe
 ### Key Metrics to Watch
 
 ```promql
-# Total token cost over time
-sum(rate(openclaw_tokens_total[5m])) by (model)
+# Total token usage over time
+sum(rate(openclaw.tokens[5m])) by (openclaw.model, openclaw.token)
+
+# Token usage histogram
+sum(gen_ai.client.token.usage) by (gen_ai.token.type, gen_ai.request.model)
 
 # Cache hit ratio
-sum(openclaw_tokens{type="cache_read"}) / 
-sum(openclaw_tokens{type=~"cache_read|input"})
+sum(openclaw.tokens{openclaw.token="cache_read"}) / 
+sum(openclaw.tokens{openclaw.token=~"cache_read|input"})
 
 # Output to input ratio (efficiency)
-sum(openclaw_tokens{type="output"}) /
-sum(openclaw_tokens{type="input"})
+sum(openclaw.tokens{openclaw.token="output"}) /
+sum(openclaw.tokens{openclaw.token="input"})
+```
+
+### Dynatrace DQL Queries
+
+**Token usage by model:**
+```sql
+timeseries sum(openclaw.tokens), by:{openclaw.model, openclaw.token}
+```
+
+**Token distribution histogram:**
+```sql
+timeseries sum(gen_ai.client.token.usage), by:{gen_ai.request.model, gen_ai.token.type}
+```
+
+**Cost tracking:**
+```sql
+timeseries sum(openclaw.cost.usd), by:{openclaw.model, openclaw.provider}
 ```
 
 ### Alerting Thresholds
@@ -181,8 +201,34 @@ Consider alerts for:
 - Cache hit ratio < 50%
 - Hourly cost > $X threshold
 
+## Token Metrics Reference
+
+### `openclaw.tokens`
+
+Counter metric for token usage:
+
+| Attribute | Values |
+|-----------|--------|
+| `openclaw.token` | `input`, `output`, `cache_read`, `cache_write`, `prompt`, `total` |
+| `openclaw.model` | Model name (e.g., `claude-opus-4-5`) |
+| `openclaw.provider` | Provider name (e.g., `anthropic`) |
+| `openclaw.channel` | Source channel |
+
+### `gen_ai.client.token.usage`
+
+Histogram metric for token distribution:
+
+| Attribute | Values |
+|-----------|--------|
+| `gen_ai.token.type` | `input`, `output`, `cache_read`, `cache_write` |
+| `gen_ai.request.model` | Model requested |
+| `gen_ai.response.model` | Model used |
+| `gen_ai.system` | Provider name |
+
 ## See Also
 
 - [Anthropic Prompt Caching](https://docs.anthropic.com/docs/build-with-claude/prompt-caching)
 - [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
 - [OpenClaw Token Use Docs](https://docs.openclaw.ai/token-use)
+- [Metrics Reference](metrics.md) - Full list of token-related metrics
+- [Traces Reference](traces.md) - Span attributes for token usage

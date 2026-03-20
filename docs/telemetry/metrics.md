@@ -1,119 +1,65 @@
 # Metrics Reference
 
-All metrics use the `openclaw.*` namespace and are exported via OTLP at the configured interval (default: 30 seconds).
+All metrics use the `openclaw.*` or `gen_ai.*` namespace and are exported via OTLP at the configured interval (default: 30 seconds).
 
-## LLM Metrics
+## GenAI Semantic Convention Metrics
 
-### `openclaw.llm.requests`
+These metrics follow the [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
 
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | requests |
-| **Description** | Total number of LLM API requests made |
-
-Tracks every call to Anthropic or OpenAI APIs. Use this to understand request volume over time.
-
----
-
-### `openclaw.llm.errors`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | errors |
-| **Description** | Total number of LLM API errors |
-
-Counts failed LLM calls (rate limits, timeouts, invalid requests, etc.). A spike here usually means rate limiting or API issues.
-
----
-
-### `openclaw.llm.tokens.total`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | tokens |
-| **Description** | Total tokens consumed (prompt + completion) |
-
-The primary cost metric. Combine with model information to estimate costs.
-
----
-
-### `openclaw.llm.tokens.prompt`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | tokens |
-| **Description** | Prompt tokens consumed |
-
-Tracks input tokens. High prompt token counts may indicate large system prompts, long conversation histories, or excessive context injection.
-
----
-
-### `openclaw.llm.tokens.completion`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | tokens |
-| **Description** | Completion tokens consumed |
-
-Tracks output tokens. Useful for understanding response verbosity.
-
----
-
-### `openclaw.llm.duration`
+### `gen_ai.client.token.usage`
 
 | | |
 |---|---|
 | **Type** | Histogram |
-| **Unit** | ms |
-| **Description** | LLM request duration in milliseconds |
+| **Unit** | token |
+| **Description** | Measures number of input and output tokens used |
 
-Latency distribution for LLM calls. Use percentiles (p50, p95, p99) to understand typical and worst-case latency.
+**Attributes:**
 
-## Tool Metrics
-
-### `openclaw.tool.calls`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | calls |
-| **Attributes** | `tool.name` |
-| **Description** | Total tool invocations |
-
-Broken down by tool name. Shows which tools are used most frequently.
-
-**Example attribute values:** `exec`, `Read`, `Write`, `web_fetch`, `web_search`, `browser`, `memory_search`
+| Attribute | Description |
+|-----------|-------------|
+| `gen_ai.request.model` | Model requested |
+| `gen_ai.response.model` | Model used for response |
+| `gen_ai.system` | Provider name (anthropic, openai, etc.) |
+| `gen_ai.token.type` | Token type: `input`, `output`, `cache_read`, `cache_write` |
 
 ---
 
-### `openclaw.tool.errors`
-
-| | |
-|---|---|
-| **Type** | Counter |
-| **Unit** | errors |
-| **Attributes** | `tool.name` |
-| **Description** | Total tool execution errors |
-
-Broken down by tool name. High error rates on specific tools may indicate configuration issues or external service problems.
-
----
-
-### `openclaw.tool.duration`
+### `gen_ai.client.operation.duration`
 
 | | |
 |---|---|
 | **Type** | Histogram |
-| **Unit** | ms |
-| **Attributes** | `tool.name` |
-| **Description** | Tool execution duration in milliseconds |
+| **Unit** | s |
+| **Description** | GenAI operation duration in seconds |
 
-How long each tool takes. Useful for identifying slow tools that bottleneck agent turns.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `gen_ai.request.model` | Model requested |
+| `gen_ai.response.model` | Model used for response |
+| `gen_ai.system` | Provider name |
+
+**Bucket Boundaries (seconds):** 0, 1, 2, 4, 6, 8, 10, 15, 20, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000
+
+---
+
+### `gen_ai.agent.request.duration`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | s |
+| **Description** | Agent request processing duration in seconds |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `success` | Whether the request succeeded |
+| `request.channel` | Source channel |
+| `request.target` | Target type |
 
 ## Agent Metrics
 
@@ -125,7 +71,124 @@ How long each tool takes. Useful for identifying slow tools that bottleneck agen
 | **Unit** | ms |
 | **Description** | Full agent turn duration (LLM + tools + processing) |
 
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `success` | Whether the turn succeeded |
+| `gen_ai.response.model` | Model used |
+| `gen_ai.agent.id` | Agent identifier |
+
 End-to-end time for a complete agent turn. This is the user-perceived latency.
+
+---
+
+### `openclaw.run.duration_ms`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Agent run duration |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.provider` | LLM provider |
+| `openclaw.model` | Model name |
+
+---
+
+### `openclaw.run.attempt`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Run attempts |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.attempt` | Attempt number |
+
+## Token & Cost Metrics
+
+### `openclaw.tokens`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Token usage by type |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.provider` | LLM provider |
+| `openclaw.model` | Model name |
+| `openclaw.token` | Token type: `input`, `output`, `cache_read`, `cache_write`, `prompt`, `total` |
+
+---
+
+### `openclaw.cost.usd`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Estimated model cost (USD) |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.provider` | LLM provider |
+| `openclaw.model` | Model name |
+
+---
+
+### `openclaw.context.tokens`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | 1 |
+| **Description** | Context window size and usage |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.provider` | LLM provider |
+| `openclaw.model` | Model name |
+| `openclaw.context` | Context type: `limit`, `used` |
+
+## Tool Metrics
+
+### `openclaw.tool.duration`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Tool execution duration in milliseconds |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `tool.name` | Tool name |
+| `success` | Whether execution succeeded |
+
+**Example tool names:** `exec`, `Read`, `Write`, `Edit`, `web_fetch`, `web_search`, `browser`, `memory_search`
 
 ## Session Metrics
 
@@ -135,46 +198,231 @@ End-to-end time for a complete agent turn. This is the user-perceived latency.
 |---|---|
 | **Type** | Counter |
 | **Unit** | resets |
-| **Attributes** | `command.source` |
 | **Description** | Total session resets |
 
-How often sessions are reset via `/new` or `/reset`. Broken down by channel source.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `command.source` | Command source |
+
+How often sessions are reset via `/new` or `/reset`.
 
 ---
 
-### `openclaw.sessions.active`
+### `openclaw.session.state`
 
 | | |
 |---|---|
-| **Type** | UpDownCounter |
-| **Unit** | sessions |
-| **Description** | Currently active sessions |
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Session state transitions |
 
-A gauge-like metric showing the number of active sessions at any point in time.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.state` | New state |
+| `openclaw.reason` | Transition reason |
+
+---
+
+### `openclaw.session.stuck`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Sessions stuck in processing |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.state` | Session state |
+
+---
+
+### `openclaw.session.stuck_age_ms`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Age of stuck sessions |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.state` | Session state |
 
 ## Message Metrics
 
-### `openclaw.messages.received`
+### `openclaw.message.queued`
 
 | | |
 |---|---|
 | **Type** | Counter |
-| **Unit** | messages |
-| **Description** | Total inbound messages |
+| **Unit** | 1 |
+| **Description** | Messages queued for processing |
 
-Counts messages received from users across all channels.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.source` | Message source |
 
 ---
 
-### `openclaw.messages.sent`
+### `openclaw.message.processed`
 
 | | |
 |---|---|
 | **Type** | Counter |
-| **Unit** | messages |
-| **Description** | Total outbound messages |
+| **Unit** | 1 |
+| **Description** | Messages processed by outcome |
 
-Counts messages sent by the agent across all channels.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.outcome` | Processing outcome (`completed`, `error`, etc.) |
+
+---
+
+### `openclaw.message.duration_ms`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Message processing duration |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.outcome` | Processing outcome |
+
+## Webhook Metrics
+
+### `openclaw.webhook.received`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Webhook requests received |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.webhook` | Update type |
+
+---
+
+### `openclaw.webhook.error`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Webhook processing errors |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.webhook` | Update type |
+
+---
+
+### `openclaw.webhook.duration_ms`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Webhook processing duration |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.channel` | Source channel |
+| `openclaw.webhook` | Update type |
+
+## Queue Metrics
+
+### `openclaw.queue.lane.enqueue`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Command queue lane enqueue events |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.lane` | Queue lane name |
+
+---
+
+### `openclaw.queue.lane.dequeue`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Command queue lane dequeue events |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.lane` | Queue lane name |
+
+---
+
+### `openclaw.queue.depth`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | 1 |
+| **Description** | Queue depth on enqueue/dequeue |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.lane` | Queue lane name |
+| `openclaw.channel` | Source channel |
+
+---
+
+### `openclaw.queue.wait_ms`
+
+| | |
+|---|---|
+| **Type** | Histogram |
+| **Unit** | ms |
+| **Description** | Queue wait time before execution |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `openclaw.lane` | Queue lane name |
 
 ## Security Metrics
 
@@ -184,10 +432,16 @@ Counts messages sent by the agent across all channels.
 |---|---|
 | **Type** | Counter |
 | **Unit** | events |
-| **Attributes** | `detection`, `severity` |
 | **Description** | Total security events detected across all detection types |
 
-The umbrella counter for all security detections. Use `detection` to filter by type (`sensitive_file_access`, `prompt_injection`, `dangerous_command`) and `severity` to filter by level (`critical`, `high`, `warning`).
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `detection` | Detection type (`sensitive_file_access`, `prompt_injection`, `dangerous_command`) |
+| `severity` | Severity level (`critical`, `high`, `warning`, `info`) |
+
+The umbrella counter for all security detections.
 
 ---
 
@@ -197,10 +451,15 @@ The umbrella counter for all security detections. Use `detection` to filter by t
 |---|---|
 | **Type** | Counter |
 | **Unit** | events |
-| **Attributes** | `file_pattern` |
 | **Description** | Attempts to access sensitive files (credentials, SSH keys, .env, etc.) |
 
-Triggers when the agent reads, writes, or edits files matching sensitive patterns (`.env`, `.ssh/`, `credentials`, `api_key`, etc.). The `file_pattern` attribute contains the regex source that matched.
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `file_pattern` | Regex pattern that matched |
+
+Triggers when the agent reads, writes, or edits files matching sensitive patterns (`.env`, `.ssh/`, `credentials`, `api_key`, etc.).
 
 ---
 
@@ -210,10 +469,15 @@ Triggers when the agent reads, writes, or edits files matching sensitive pattern
 |---|---|
 | **Type** | Counter |
 | **Unit** | events |
-| **Attributes** | `pattern_count` |
 | **Description** | Prompt injection attempts detected in inbound messages |
 
-Detects social engineering patterns like "ignore previous instructions", fake `[SYSTEM]` tags, role manipulation ("pretend you are"), and jailbreak attempts. The `pattern_count` attribute shows how many patterns matched (more = higher confidence).
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `pattern_count` | Number of patterns matched |
+
+Detects social engineering patterns like "ignore previous instructions", fake `[SYSTEM]` tags, role manipulation, and jailbreak attempts.
 
 ---
 
@@ -223,61 +487,81 @@ Detects social engineering patterns like "ignore previous instructions", fake `[
 |---|---|
 | **Type** | Counter |
 | **Unit** | events |
-| **Attributes** | `command_type` |
 | **Description** | Dangerous shell command executions detected |
 
-Catches data exfiltration (`curl -d`, `nc -e`), destructive commands (`rm -rf /`, `mkfs`), privilege escalation (`chmod +s`), crypto mining (`xmrig`), and persistence mechanisms (`crontab`, `.bashrc` modification). The `command_type` attribute describes the matched threat.
+**Attributes:**
 
----
+| Attribute | Description |
+|-----------|-------------|
+| `command_type` | Type of threat detected |
+
+Catches data exfiltration (`curl -d`, `nc -e`), destructive commands (`rm -rf /`, `mkfs`), privilege escalation (`chmod +s`), crypto mining (`xmrig`), and persistence mechanisms.
 
 ## Dashboard Examples
 
 ### Token Usage Over Time
 
-Track cost by monitoring `openclaw.llm.tokens.total` over time. In Dynatrace:
+Track cost by monitoring token usage over time. In Dynatrace:
 
-```
-timeseries avg(openclaw.llm.tokens.total), by:{gen_ai.request.model}
+```sql
+timeseries sum(openclaw.tokens), by:{openclaw.model, openclaw.token}
 ```
 
 ### LLM Latency Percentiles
 
-```
-timeseries percentile(openclaw.llm.duration, 50, 95, 99)
+```sql
+timeseries percentile(gen_ai.client.operation.duration, 50, 95, 99)
 ```
 
-### Tool Error Rate
+### Tool Duration by Tool Name
 
-```
-timeseries sum(openclaw.tool.errors) / sum(openclaw.tool.calls) * 100, by:{tool.name}
+```sql
+timeseries avg(openclaw.tool.duration), by:{tool.name}
 ```
 
 ### Most Used Tools
 
-```
-timeseries sum(openclaw.tool.calls), by:{tool.name}
+```sql
+timeseries count(openclaw.tool.duration), by:{tool.name}
 ```
 
 ### Security Events Over Time
 
-```
+```sql
 timeseries sum(openclaw.security.events), by:{detection, severity}
 ```
 
 ### Sensitive File Access by Pattern
 
-```
+```sql
 timeseries sum(openclaw.security.sensitive_file_access), by:{file_pattern}
 ```
 
 ### Dangerous Commands by Type
 
-```
+```sql
 timeseries sum(openclaw.security.dangerous_command), by:{command_type}
 ```
 
-### Prompt Injection Attempts
+### Queue Depth Monitoring
 
+```sql
+timeseries avg(openclaw.queue.depth), by:{openclaw.lane}
 ```
-timeseries sum(openclaw.security.prompt_injection), by:{pattern_count}
+
+### Webhook Processing Time
+
+```sql
+timeseries avg(openclaw.webhook.duration_ms), by:{openclaw.channel, openclaw.webhook}
 ```
+
+### Message Processing Outcome Distribution
+
+```sql
+timeseries sum(openclaw.message.processed), by:{openclaw.outcome}
+```
+
+### Cost Tracking by Model
+
+```sql
+timeseries sum(openclaw.cost.usd), by:{openclaw.model, openclaw.provider}

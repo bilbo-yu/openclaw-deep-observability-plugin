@@ -21,7 +21,7 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/bilbo-yu/openclaw-deep-observability-plugin.git
+   openclaw gateway install openclaw-deep-observability-plugin
    ```
 
 2. Add to your `openclaw.json`:
@@ -31,11 +31,8 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
         "enabled": true
      },
      "plugins": {
-       "load": {
-         "paths": ["/path/to/openclaw-deep-observability-plugin"]
-       },
        "entries": {
-         "otel-deep-observability": {
+         "openclaw-deep-observability-plugin": {
            "enabled": true,
            "config": {
              "endpoint": "http://localhost:4318",
@@ -50,32 +47,34 @@ OpenClaw Deep Observability Plugin is an enterprise-grade OpenTelemetry instrume
    }
    ```
 
-3. Clear cache and restart:
+3. Restart openclaw gateway:
    ```bash
-   rm -rf /tmp/jiti
    openclaw gateway restart
    ```
 
-See [Getting Started](getting-started.md) for detailed instructions.
 
 ## Supported Backends
 
-Works with any OTLP-compatible backend:
+Works with any OTLP-compatible backend. See [Backends Overview](backends/index.md) for a complete comparison.
 
 - [Dynatrace](backends/dynatrace.md) — Direct OTLP ingest
 - [Grafana](backends/grafana.md) — Tempo, Loki, Mimir
-- Jaeger — Distributed tracing
-- Prometheus + Grafana — Metrics
-- Honeycomb, New Relic, Datadog — Cloud platforms
-- Local OTel Collector — Self-hosted
+- [Generic OTLP](backends/generic-otlp.md) — Any OTLP-compatible backend
+- [OTel Collector](backends/otel-collector.md) — OpenTelemetry Collector setup
 
 ## Documentation
 
-- [Getting Started](getting-started.md) — Setup in 5 minutes
 - [Configuration](configuration.md) — All options explained
 - [Architecture](architecture.md) — How it works
-- [Limitations](limitations.md) — Known constraints
-- [Telemetry Reference](telemetry/) — Metric/trace details
+- [Comparison](comparison.md) — Feature comparison with alternatives
+- Jaeger — Distributed tracing
+- Prometheus + Grafana — Metrics
+- Honeycomb, New Relic, Datadog — Cloud platforms
+### Telemetry Reference
+
+- [Traces](telemetry/traces.md) — Distributed tracing details
+- [Metrics](telemetry/metrics.md) — Available metrics reference
+- [Tokens](telemetry/tokens.md) — Token usage tracking
 
 ### Security Monitoring
 
