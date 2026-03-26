@@ -239,161 +239,49 @@ export function registerHooks(
   // ── llm_input ────────────────────────────────────────────────────
   // Creates an LLM span for tracking chat operations.
 
-  // api.on(
-  //   "llm_input",
-  //   (event: any, ctx: any) => {
-  //     try {
-  //       const runId = event?.runId;
-  //       const sessionKey = ctx?.sessionKey || "unknown";
-  //       const provider = event?.provider || "unknown";
-  //       const model = event?.model || "unknown";
-  //       const prompt = event?.prompt || "";
-  //       const startTime = Date.now();
+  api.on(
+    "llm_input",
+    (event: any, ctx: any) => {
+      try {
+        const runId = event?.runId;
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const provider = event?.provider || "unknown";
+        const model = event?.model || "unknown";
+        const prompt = event?.prompt || "";
+        const startTime = Date.now();
+        logger.debug?.(`[otel] llm_input event for session=${sessionKey} : ${JSON.stringify(event)}`);
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
 
-  //       // Get parent context — prefer agent turn span, fall back to root
-  //       const sessionCtx = sessionContextMap.get(sessionKey);
-  //       const parentContext = sessionCtx?.agentContext || sessionCtx?.rootContext || context.active();
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_input hook (via api.on)");
 
-  //       // Create LLM span with GenAI semantic conventions
-  //       const span = tracer.startSpan(
-  //         `chat ${model}`,
-  //         {
-  //           kind: SpanKind.CLIENT,
-  //           attributes: {
-  //             "gen_ai.system": provider,
-  //             "gen_ai.operation.name": "chat",
-  //             "gen_ai.request.model": model,
-  //             "openclaw.session.key": sessionKey,
-  //             "openclaw.run.id": runId,
-  //           },
-  //         },
-  //         parentContext
-  //       );
+  // ── llm_output ───────────────────────────────────────────────────
+  // Ends the pending LLM span created in llm_input.
 
-  //       // Set prompt attributes (user message)
-  //       if (prompt) {
-  //         span.setAttribute("gen_ai.prompt.0.role", "user");
-  //         span.setAttribute("gen_ai.prompt.0.content", String(prompt).slice(0, 2048));
-  //       }
+  api.on(
+    "llm_output",
+    (event: any, ctx: any) => {
+      try {
+        const runId = event?.runId;
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const model = event?.model || "unknown";
+        const lastAssistant = event?.lastAssistant;
+        logger.debug?.(`[otel] llm_output event for session=${sessionKey} : ${JSON.stringify(event)}`);
 
-  //       // Store span in pendingLlmSpans for later ending in llm_output
-  //       if (sessionCtx) {
-  //         if (!sessionCtx.pendingLlmSpans) {
-  //           sessionCtx.pendingLlmSpans = new Map();
-  //         }
-  //         sessionCtx.pendingLlmSpans.set(runId, { span, startTime });
-  //       }
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
 
-  //       logger.debug?.(`[otel] LLM span started: model=${model}, provider=${provider}, runId=${runId}, session=${sessionKey}`);
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-
-  //     return undefined;
-  //   },
-  //   { priority: -100 }
-  // );
-  // logger.info("[otel] Registered llm_input hook (via api.on)");
-
-  // // ── llm_output ───────────────────────────────────────────────────
-  // // Ends the pending LLM span created in llm_input.
-
-  // api.on(
-  //   "llm_output",
-  //   (event: any, ctx: any) => {
-  //     try {
-  //       const runId = event?.runId;
-  //       const sessionKey = ctx?.sessionKey || "unknown";
-  //       const model = event?.model || "unknown";
-  //       const lastAssistant = event?.lastAssistant;
-
-  //       // Get session context and pending LLM span
-  //       const sessionCtx = sessionContextMap.get(sessionKey);
-  //       const pendingLlmSpan = sessionCtx?.pendingLlmSpans?.get(runId);
-
-  //       if (pendingLlmSpan) {
-  //         const { span, startTime } = pendingLlmSpan;
-
-  //         // Set response model
-  //         span.setAttribute("gen_ai.response.model", model);
-
-  //         // Set completion attributes (assistant response)
-  //         if (lastAssistant) {
-  //           const role = lastAssistant.role || "assistant";
-  //           span.setAttribute("gen_ai.completion.0.role", role);
-
-  //           // Extract content from lastAssistant
-  //           const contentArray = lastAssistant.content;
-  //           if (contentArray && Array.isArray(contentArray)) {
-  //             // Extract text parts from content array
-  //             const textParts = contentArray
-  //               .filter((c: any) => c.type === "text")
-  //               .map((c: any) => String(c.text || ""));
-  //             const content = textParts.join("\n");
-  //             if (content) {
-  //               span.setAttribute("gen_ai.completion.0.content", content.slice(0, 2048));
-  //             }
-  //           } else if (typeof lastAssistant.content === "string") {
-  //             span.setAttribute("gen_ai.completion.0.content", lastAssistant.content.slice(0, 2048));
-  //           }
-  //         }
-
-  //         // Extract usage from lastAssistant message
-  //         const usage = lastAssistant?.usage;
-  //         if (usage) {
-  //           if (typeof usage.input === "number") {
-  //             span.setAttribute("gen_ai.usage.input_tokens", String(usage.input));
-  //           }
-  //           if (typeof usage.output === "number") {
-  //             span.setAttribute("gen_ai.usage.output_tokens", String(usage.output));
-  //           }
-  //           if (typeof usage.totalTokens === "number") {
-  //             span.setAttribute("gen_ai.usage.total_tokens", String(usage.totalTokens));
-  //           }
-  //           if (typeof usage.cacheRead === "number") {
-  //             span.setAttribute("gen_ai.usage.cache_read_tokens", String(usage.cacheRead));
-  //           }
-  //           if (typeof usage.cacheWrite === "number") {
-  //             span.setAttribute("gen_ai.usage.cache_write_tokens", String(usage.cacheWrite));
-  //           }
-  //         }
-
-  //         // Set span status based on stopReason
-  //         const stopReason = lastAssistant?.stopReason;
-  //         if (stopReason === "stop" || stopReason === "end_turn") {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //         } else if (stopReason) {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //           span.setAttribute("gen_ai.response.stop_reason", stopReason);
-  //         } else {
-  //           span.setStatus({ code: SpanStatusCode.OK });
-  //         }
-
-  //         // Calculate duration
-  //         const durationMs = Date.now() - startTime;
-  //         span.setAttribute("openclaw.llm.duration_ms", durationMs);
-
-  //         // End the span
-  //         span.end();
-
-  //         // Remove from pendingLlmSpans
-  //         if (sessionCtx) {
-  //           sessionCtx.pendingLlmSpans.delete(runId);
-  //         }
-
-  //         logger.debug?.(`[otel] LLM span ended: model=${model}, runId=${runId}, session=${sessionKey}, duration=${durationMs}ms`);
-  //       } else {
-  //         logger.debug?.(`[otel] No pending LLM span found for runId=${runId}, session=${sessionKey}`);
-  //       }
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-
-  //     return undefined;
-  //   },
-  //   { priority: -100 }
-  // );
-  // logger.info("[otel] Registered llm_output hook (via api.on)");
+      return undefined;
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered llm_output hook (via api.on)");
 
 
 
@@ -462,6 +350,7 @@ export function registerHooks(
         `[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
       );
       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
+      const sessionId = event?.sessionId || sessionKey;
       const agentId = event?.agentId || ctx?.agentId || "unknown";
       // const model = event?.model || "unknown";
       const prompt = event?.prompt;
@@ -478,7 +367,8 @@ export function registerHooks(
           kind: SpanKind.INTERNAL,
           attributes: {
             "gen_ai.agent.id": agentId,
-            "gen_ai.conversation.id": sessionKey,
+            "openclaw.session.key": sessionKey,
+            "gen_ai.conversation.id": sessionId,
           },
         },
         parentContext
@@ -848,9 +738,10 @@ export function registerHooks(
         }
         span.setAttribute("openclaw.tool.duration_ms", durationMs);
 
-        histograms.toolDuration.record(durationMs, {
-          success: !hasError,
-          "tool.name": toolName,
+        histograms.aiOpDurationHistogram.record(durationMs / 1000.0, {
+          "gen_ai.operation.name": "execute_tool",
+          "error.type": hasError ? "tool_error" : "",
+          "gen_ai.tool.name": toolName,
         });
 
         span.end(endTime);
@@ -1190,10 +1081,11 @@ export function registerHooks(
       // Calculate and record duration
       const durationMs = spanEndTime - spanStartTime;
       toolSpan.setAttribute("openclaw.tool.duration_ms", durationMs);
-      histograms.toolDuration.record(durationMs, {
-        success: !isError,
-        "tool.name": toolName,
-      });
+      histograms.aiOpDurationHistogram.record(durationMs / 1000.0, {
+          "gen_ai.operation.name": "execute_tool",
+          "error.type": isError ? "tool_error" : "",
+          "gen_ai.tool.name": toolName,
+        });
 
       // End span with correct end time
       toolSpan.end(spanEndTime);

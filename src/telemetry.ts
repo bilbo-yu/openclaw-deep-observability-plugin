@@ -171,14 +171,10 @@ export interface OtelCounters {
 export interface OtelHistograms {
   /** LLM token usage distribution */
   tokenHistogram: Histogram;
-  /** LLM request duration distribution in seconds */
-  llmDurationHistogram: Histogram;
+  /** GenAI agent operations(llm/tool) duration distribution in seconds */
+  aiOpDurationHistogram: Histogram;
   /** Message processing duration distribution in seconds */
   messageDurationHistogram: Histogram;
-  /** LLM request duration in ms */
-  // llmDuration: Histogram;
-  /** Tool execution duration in ms */
-  toolDuration: Histogram;
   /** Agent turn duration in ms */
   agentTurnDuration: Histogram;
   // ═══════════════════════════════════════════════════════════════
@@ -545,7 +541,7 @@ export function initTelemetry(
       unit: "token",
       description: "Measures number of input and output tokens used",
     }),
-    llmDurationHistogram: meter.createHistogram(
+    aiOpDurationHistogram: meter.createHistogram(
       "gen_ai.client.operation.duration",
       {
         unit: "s",
@@ -571,10 +567,10 @@ export function initTelemetry(
     //   description: "LLM request duration",
     //   unit: "ms",
     // }),
-    toolDuration: meter.createHistogram("openclaw.tool.duration", {
-      description: "Tool execution duration",
-      unit: "ms",
-    }),
+    // toolDuration: meter.createHistogram("openclaw.tool.duration", {
+    //   description: "Tool execution duration",
+    //   unit: "ms",
+    // }),
     agentTurnDuration: meter.createHistogram("openclaw.agent.turn_duration", {
       description: "Full agent turn duration (LLM + tools)",
       unit: "ms",

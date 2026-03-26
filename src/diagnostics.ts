@@ -296,7 +296,7 @@ function handleModelUsage(
 
   // Record LLM duration (original style)
   if (typeof evt.durationMs === "number") {
-    histograms.llmDurationHistogram.record(
+    histograms.aiOpDurationHistogram.record(
       evt.durationMs / 1000.0,
       otelMetricAttrs,
     );
@@ -537,7 +537,7 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
       attributes: {
         "openclaw.message.channel": channel,
         "openclaw.session.key": sessionKey,
-        "gen_ai.conversation.id": sessionKey,
+        "gen_ai.conversation.id": sessionId,
         "openclaw.message.direction": "inbound",
         "openclaw.message.source": source,
       },
