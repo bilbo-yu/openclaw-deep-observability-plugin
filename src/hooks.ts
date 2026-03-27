@@ -66,37 +66,37 @@ class TokenUsage {
 // /** Map of sessionKey → active trace context. Cleaned up on agent_end. */
 // const sessionContextMap = new Map<string, SessionTraceContext>();
 
-function redactToolResult(contentObject: any): ContentInfo {
-  if (contentObject && Array.isArray(contentObject)) {
-    const textParts = contentObject
-      .filter((c: any) => c.type === "text")
-      .map((c: any) => String(c.text || ""));
-    const totalChars = textParts.reduce(
-      (sum: number, t: string) => sum + t.length,
-      0,
-    );
-    // Record tool output
-    const output = textParts.join("\n");
-    return {
-      totalChars: totalChars,
-      totalParts: contentObject.length,
-      content: redactText(output),
-    };
-  } else if (typeof contentObject === "string") {
-    return {
-      totalChars: contentObject.length,
-      totalParts: 1,
-      content: redactText(contentObject),
-    };
-  } else {
-    const str = JSON.stringify(contentObject);
-    return {
-      totalChars: str.length,
-      totalParts: 1,
-      content: redactText(str),
-    };
-  }
-}
+// function extractAndRedactTextContent(contentObject: any): ContentInfo {
+//   if (contentObject && Array.isArray(contentObject)) {
+//     const textParts = contentObject
+//       .filter((c: any) => c.type === "text")
+//       .map((c: any) => String(c.text || ""));
+//     const totalChars = textParts.reduce(
+//       (sum: number, t: string) => sum + t.length,
+//       0,
+//     );
+//     // Record tool output
+//     const output = textParts.join("\n");
+//     return {
+//       totalChars: totalChars,
+//       totalParts: contentObject.length,
+//       content: redactText(output),
+//     };
+//   } else if (typeof contentObject === "string") {
+//     return {
+//       totalChars: contentObject.length,
+//       totalParts: 1,
+//       content: redactText(contentObject),
+//     };
+//   } else {
+//     const str = JSON.stringify(contentObject);
+//     return {
+//       totalChars: str.length,
+//       totalParts: 1,
+//       content: redactText(str),
+//     };
+//   }
+// }
 /**
  * Register all plugin hooks on the OpenClaw plugin API.
  */
@@ -369,12 +369,12 @@ export function registerHooks(
     try {
       logger.debug?.(`[otel] llm_output event : event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
       const sessionKey = ctx?.sessionKey || "unknown";
-      const lastAssistant = event?.lastAssistant;
+      const lastAssistantTexts = event?.assistantTexts;
 
       // Set messageOutput from assistantTexts (redacted)
       const sessionCtx = sessionContextMap.get(sessionKey);
-      if (sessionCtx && lastAssistant) {
-        sessionCtx.messageOutput = redactText(lastAssistant);
+      if (sessionCtx && lastAssistantTexts) {
+        sessionCtx.messageOutput = lastAssistantTexts.join("\n");
       }
 
     } catch {
@@ -528,7 +528,7 @@ export function registerHooks(
         const lastMsg = messages[messages.length - 1] || {};
         // const input = firstMsg.role === "user" ? firstMsg.content : {};
         const output = lastMsg.role === "assistant" ? lastMsg.content : {};
-        sessionCtx.messageOutput = redactContent(output);
+        sessionCtx.messageOutput = toString(redactContent(output).content);
         
         const startOutputMsgOffset = (sessionCtx.startMessagesLength||0) + 1
         if (messages.length > startOutputMsgOffset){
@@ -644,12 +644,14 @@ export function registerHooks(
         const message = event?.message;
         if (message) {
           const contentArray = message?.content;
-          const { totalChars, totalParts, content } = redactToolResult(contentArray);
-          // Record result_chars and result_parts
-          span.setAttribute("gen_ai.tool.call.result.chars", totalChars);
-          // Record tool output
-          if (captureContent && content) {
-            span.setAttribute("traceloop.entity.output", content);
+          if(contentArray){
+            const contentInfo = redactContent(contentArray);
+            // Record result_chars and result_parts
+            span.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
+            // Record tool output
+            if (captureContent) {
+              span.setAttribute("traceloop.entity.output", toString(contentInfo.content));
+            }
           }
         }
 
@@ -833,7 +835,7 @@ export function registerHooks(
     };
     try {
       // LLM input
-      let inputText;
+      let inputText: ContentInfo | undefined;
       if (prevMsg?.role === "user") {
         inputText = redactContent(prevMsg?.content || []);
       }
@@ -862,15 +864,23 @@ export function registerHooks(
         },
         parentContext,
       );
-      if (captureContent && inputText) {
-        llmSpan.setAttribute("traceloop.entity.input", JSON.stringify(inputText));
+      if (inputText){
+        llmSpan.setAttribute("gen_ai.input.messages.chars", inputText.totalChars);
+        if (captureContent) {
+          llmSpan.setAttribute("traceloop.entity.input", toString(inputText.content));
+        }
       }
+      
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
-      if (captureContent && contentArray) {
+      if (contentArray) {
         const outputText = redactContent(contentArray);
-        llmSpan.setAttribute("traceloop.entity.output", JSON.stringify(outputText));
+        llmSpan.setAttribute("gen_ai.output.messages.chars", outputText.totalChars);
+        if (captureContent) {
+          llmSpan.setAttribute("traceloop.entity.output", toString(outputText.content));
+        }
       }
+      
 
       // Set gen_ai.usage.* from message usage
       const msgUsage = msg.usage;
@@ -1005,11 +1015,13 @@ export function registerHooks(
 
       // Set tool output from content
       const contentArray = msg.content;
-      const { totalChars, totalParts, content } = redactToolResult(contentArray);
-      if (captureContent && content) {
-        toolSpan.setAttribute("traceloop.entity.output", content);
+      if (contentArray){
+        const contentInfo = redactContent(contentArray);
+        if (captureContent) {
+          toolSpan.setAttribute("traceloop.entity.output", toString(contentInfo.content));
+        }
+        toolSpan.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
       }
-      toolSpan.setAttribute("gen_ai.tool.call.result.chars", totalChars);
 
       // Set status based on isError or securityEvent (unified logic)
       if (isError) {
@@ -1158,30 +1170,58 @@ export function registerHooks(
     return tokenUsage;
   }
 
-  
+  function toString(content: any): string {
+    if (typeof content === "string") {
+      return content;
+    }
+    return JSON.stringify(content);
+  }
+
   /**
-   * 对 content 进行脱敏处理
+   * 对 content 进行脱敏和裁剪处理
    * - 字符串：直接用 redactText 处理
    * - 数组：对 text 和 thinking 字段用 redactText 处理
    * - 其他：JSON 序列化后用 redactText 处理
+   * 
+   * 返回 ContentInfo 类型：
+   * - totalChars: text 和 thinking 部分的字符总数
+   * - totalParts: 内容块数量
+   * - content: 脱敏加裁剪后的内容
    */
-  function redactContent(content: any): any {
+  function redactContent(content: any): ContentInfo {
     if (typeof content === "string") {
-      return redactText(content);
+      return {
+        totalChars: content.length,
+        totalParts: 1,
+        content: redactText(content),
+      };
     }
     
     if (Array.isArray(content)) {
-      return content.map((item) => {
+      let totalChars = 0;
+      const redactedArray = content.map((item) => {
         if (item?.type === "text" && item?.text) {
-          return { ...item, text: redactText(item.text) };
+          totalChars += String(item.text).length;
+          return { type: "text", text: redactText(item.text) };
         } else if (item?.type === "thinking" && item?.thinking) {
-          return { ...item, thinking: redactText(item.thinking) };
+          totalChars += String(item.thinking).length;
+          return { type: "thinking", thinking: redactText(item.thinking) };
         }
         return item;
       });
+      return {
+        totalChars,
+        totalParts: content.length,
+        content: redactedArray,
+      };
     }
     
-    return redactText(JSON.stringify(content));
+    const str = JSON.stringify(content);
+    return {
+      totalChars: str.length,
+      totalParts: 1,
+      content: redactText(str),
+    };
   }
 
   /**
@@ -1211,11 +1251,12 @@ export function registerHooks(
     // 2. 添加历史消息
     for (const msg of messages) {
       if (msg?.role && msg?.content) {
-        totalChars += JSON.stringify(msg.content).length;
+        const contentInfo = redactContent(msg.content);
+        totalChars += contentInfo.totalChars;
         
         const filteredMsg: any = {};
         if (msg.role) filteredMsg.role = msg.role;
-        if (msg.content) filteredMsg.content = redactContent(msg.content);
+        if (msg.content) filteredMsg.content = contentInfo.content;
         if (msg.stopReason) filteredMsg.stopReason = msg.stopReason;
         if (msg.toolCallId) filteredMsg.toolCallId = msg.toolCallId;
         if (msg.toolName) filteredMsg.toolName = msg.toolName;

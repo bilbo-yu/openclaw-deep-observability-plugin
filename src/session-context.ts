@@ -22,7 +22,7 @@ export interface ToolCallInfo {
 export interface ContentInfo {
   totalChars: number;
   totalParts: number;
-  content: string;
+  content: any;
 }
 
 /** Pending LLM span with start time for duration calculation */
