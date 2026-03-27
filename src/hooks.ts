@@ -414,7 +414,19 @@ export function registerHooks(
 
     // Return skill tracking instructions to be prepended to the prompt
     return {
-      prependContext: "Instructions: \nDuring your internal reasoning, at the end of your thinking block, output a `<skills>` tag listing the skills you are going to use. Format: <skills>skill1,skill2</skills>. This tag must not appear in your final response to user.\nUser input:"
+      prependContext: `<skill_tracking_instructions>
+During your internal reasoning process, when you decide to use one or more available skills, output a skill declaration tag at the end of your thinking block.
+
+Format: <skills>skill_name_1,skill_name_2</skills>
+
+Rules:
+- Only include skills you will actually invoke
+- Use comma to separate multiple skill names
+- This tag is for internal tracking only, do not include it in your final response
+- If no skills will be used, omit this tag entirely
+</skill_tracking_instructions>
+
+User input: `
     };
   }
 
