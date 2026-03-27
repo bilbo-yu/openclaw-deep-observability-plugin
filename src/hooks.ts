@@ -342,7 +342,7 @@ export function registerHooks(
 
   function handleLLMInput(event: any, ctx: any) { 
     try {
-        logger.debug?.(`[otel] llm_input event : event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        logger.debug?.(`[otel] llm_input event :  ctx=${JSON.stringify(ctx)}`);
         const sessionKey = ctx?.sessionKey || "unknown";
         const systemPrompt = event?.systemPrompt || "";
         const prompt = event?.prompt || "";
@@ -407,7 +407,7 @@ export function registerHooks(
 
   function handleBeforePromptBuild(event: any, ctx: any) {
     try {
-      logger.debug?.(`[otel] before_prompt_build event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+      logger.debug?.(`[otel] before_prompt_build event: ctx=${JSON.stringify(ctx)}`);
     } catch {
       // Never let telemetry errors break the main flow
     }
@@ -676,7 +676,7 @@ User input: `
   function handleToolResultPersist(event: any, ctx: any) {
     try {
       logger.debug?.(
-        `[otel] Tool result persist: event=${JSON.stringify(event)}}`
+        `[otel] Tool result persist: ctx=${JSON.stringify(ctx)}}`
       );
       const toolName = event?.toolName || "unknown";
       const toolCallId = event?.toolCallId || "";
@@ -779,7 +779,7 @@ User input: `
   function handleBeforeToolCall(event: any, ctx: any) {
     try {
       logger.debug?.(
-        `[otel] before_tool_call event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+        `[otel] before_tool_call event: ctx=${JSON.stringify(ctx)}`
       );
 
       const toolName = event?.toolName || "unknown";
