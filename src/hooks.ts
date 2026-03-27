@@ -414,7 +414,7 @@ export function registerHooks(
 
     // Return skill tracking instructions to be prepended to the prompt
     return {
-      prependContext: "Instructions: \nWhen you think through the problem, end your internal reasoning with a `<skills>` tag listing the skills you used. Format: `<skills>skill1,skill2,...</skills>`. Do not include this tag in your final answer.\nUser input:"
+      prependContext: "Instructions: \nDuring your internal reasoning, at the end of your thinking block, output a `<skills>` tag listing the skills you are going to use. Format: <skills>skill1,skill2</skills>. This tag must not appear in your final response to user.\nUser input:"
     };
   }
 
@@ -1015,9 +1015,8 @@ export function registerHooks(
       } else {
         llmSpan.setStatus({ code: SpanStatusCode.OK });
       }
-      // End span with correct end time
-      logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`);
-      llmSpan.end(spanEndTime);
+      
+      
 
       // ═══════════════════════════════════════════════════════════════
       // Create skill spans for skills referenced in the content
@@ -1060,6 +1059,9 @@ export function registerHooks(
           }
         }
       }
+      llmSpan.end(spanEndTime);
+      // End span with correct end time
+      logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`);
     } catch (spanError) {
       logger.debug?.(
         `[otel] Error creating LLM span from message: msg = ${msg}, error=${spanError}`,
