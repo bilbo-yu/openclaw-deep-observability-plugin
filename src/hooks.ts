@@ -303,8 +303,14 @@ export function registerHooks(
     for (const [key, ctx] of sessionContextMap) {
       if (now - ctx.startTime > maxAge) {
         try {
-          ctx.agentSpan?.end();
-          if (ctx.rootSpan !== ctx.agentSpan) ctx.rootSpan?.end();
+          if (ctx.agentSpan) {
+            logger.debug?.(`[otel] Span ending (stale cleanup): name=openclaw.agent.turn, session=${key}`);
+            ctx.agentSpan.end();
+          }
+          if (ctx.rootSpan && ctx.rootSpan !== ctx.agentSpan) {
+            logger.debug?.(`[otel] Span ending (stale cleanup): name=openclaw.request, session=${key}`);
+            ctx.rootSpan.end();
+          }
         } catch {
           /* ignore */
         }
@@ -361,7 +367,7 @@ export function registerHooks(
 
   function handleLLMOutput(event: any, ctx: any) {
     try {
-      logger.debug?.(`[otel] llm_output event : ${JSON.stringify(ctx)}`);
+      logger.debug?.(`[otel] llm_output event : event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
       const sessionKey = ctx?.sessionKey || "unknown";
       const lastAssistant = event?.lastAssistant;
 
@@ -429,7 +435,7 @@ export function registerHooks(
       }
 
       logger.debug?.(
-        `[otel] Agent turn span started: agent=${agentId}, session=${sessionKey}, startMessagesLength=${event?.messages?.length || 0}`
+        `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
       );
     } catch {
       logger.warn?.(
@@ -443,7 +449,9 @@ export function registerHooks(
 
   function handleGatewayStartup() {
     try {
-      const span = tracer.startSpan("openclaw.gateway.startup", {
+      const spanName = "openclaw.gateway.startup";
+      logger.debug?.(`[otel] Span starting: name=${spanName}`);
+      const span = tracer.startSpan(spanName, {
         kind: SpanKind.INTERNAL,
         attributes: {
           "openclaw.event.type": "gateway",
@@ -451,6 +459,7 @@ export function registerHooks(
         },
       });
       span.setStatus({ code: SpanStatusCode.OK });
+      logger.debug?.(`[otel] Span ending: name=${spanName}`);
       span.end();
     } catch {
       logger.warn?.(
@@ -463,13 +472,15 @@ export function registerHooks(
     try {
       const action = event?.action || "unknown";
       const sessionKey = event?.sessionKey || "unknown";
+      const spanName = `openclaw.command.${action}`;
 
       // Get parent context if available
       const sessionCtx = sessionContextMap.get(sessionKey);
       const parentContext = sessionCtx?.rootContext || context.active();
 
+      logger.debug?.(`[otel] Span starting: name=${spanName}, session=${sessionKey}`);
       const span = tracer.startSpan(
-        `openclaw.command.${action}`,
+        spanName,
         {
           kind: SpanKind.INTERNAL,
           attributes: {
@@ -488,6 +499,7 @@ export function registerHooks(
       }
 
       span.setStatus({ code: SpanStatusCode.OK });
+      logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}`);
       span.end();
     } catch {
       logger.warn?.(
@@ -518,16 +530,22 @@ export function registerHooks(
         const output = lastMsg.role === "assistant" ? lastMsg.content : {};
         sessionCtx.messageOutput = redactContent(output);
         
-
-        const { messageList, totalChars } = buildMessageListForSpan(messages.slice(sessionCtx.startMessagesLength || 0))
-        agentSpan.setAttribute("gen_ai.output.messages.size", messageList.length);
-        agentSpan.setAttribute("gen_ai.output.messages.chars", totalChars);
-        if (captureContent) {
-            agentSpan.setAttribute(
-              "traceloop.entity.output",
-              JSON.stringify(messageList)
-            );
+        const startOutputMsgOffset = (sessionCtx.startMessagesLength||0) + 1
+        if (messages.length > startOutputMsgOffset){
+          const { messageList, totalChars } = buildMessageListForSpan(messages.slice(startOutputMsgOffset))
+          agentSpan.setAttribute("gen_ai.output.messages.size", messageList.length);
+          agentSpan.setAttribute("gen_ai.output.messages.chars", totalChars);
+          if (captureContent) {
+              agentSpan.setAttribute(
+                "traceloop.entity.output",
+                JSON.stringify(messageList)
+              );
           }
+        }else{
+          agentSpan.setAttribute("gen_ai.output.messages.size", 0);
+          agentSpan.setAttribute("gen_ai.output.messages.chars", 0);
+        }
+        
 
         // Create LLM spans and tool spans for new messages in this conversation
         const {
@@ -580,6 +598,7 @@ export function registerHooks(
           });
         }
 
+        logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}, success=${success}`);
         agentSpan.end();
         sessionCtx.agentSpan = undefined;
       }
@@ -683,7 +702,7 @@ export function registerHooks(
         }
 
         logger.debug?.(
-          `[otel] Tool span ended: tool=${toolName}, session=${sessionKey}, durationMs=${durationMs}`
+          `[otel] Span ending: name=tool.${toolName}, session=${sessionKey}, durationMs=${durationMs}`
         );
       } else {
         logger.debug?.(
@@ -770,7 +789,7 @@ export function registerHooks(
       }
 
       logger.debug?.(
-        `[otel] Tool span started: tool=${toolName}, session=${sessionKey}`
+        `[otel] Span starting: name=tool.${toolName}, session=${sessionKey}`
       );
     } catch {
       logger.warn?.(
@@ -816,7 +835,7 @@ export function registerHooks(
       // LLM input
       let inputText;
       if (prevMsg?.role === "user") {
-        inputText = JSON.stringify(prevMsg?.content);
+        inputText = redactContent(prevMsg?.content || []);
       }
 
       // Get model and provider from message
@@ -826,8 +845,10 @@ export function registerHooks(
       tokenUsage.provider = msg.provider;
 
       // Create LLM span with correct start time, using agentSpan as parent
+      const spanName = `chat ${msgModel}`;
+      logger.debug?.(`[otel] Span starting: name=${spanName}, session=${sessionKey}, startTime=${spanStartTime}`);
       const llmSpan = tracer.startSpan(
-        `chat ${msgModel}`,
+        spanName,
         {
           kind: SpanKind.CLIENT,
           startTime: spanStartTime,
@@ -842,13 +863,13 @@ export function registerHooks(
         parentContext,
       );
       if (captureContent && inputText) {
-        llmSpan.setAttribute("traceloop.entity.input", redactText(inputText));
+        llmSpan.setAttribute("traceloop.entity.input", JSON.stringify(inputText));
       }
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
       if (captureContent && contentArray) {
-        const outputText = JSON.stringify(contentArray);
-        llmSpan.setAttribute("traceloop.entity.output", redactText(outputText));
+        const outputText = redactContent(contentArray);
+        llmSpan.setAttribute("traceloop.entity.output", JSON.stringify(outputText));
       }
 
       // Set gen_ai.usage.* from message usage
@@ -896,11 +917,8 @@ export function registerHooks(
         llmSpan.setStatus({ code: SpanStatusCode.OK });
       }
       // End span with correct end time
+      logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`);
       llmSpan.end(spanEndTime);
-
-      logger.debug?.(
-        `[otel] LLM span created from message: model=${msgModel}, startTime=${spanStartTime}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`,
-      );
     } catch (spanError) {
       logger.debug?.(
         `[otel] Error creating LLM span from message: msg = ${msg}, error=${spanError}`,
@@ -939,8 +957,10 @@ export function registerHooks(
       const toolArguments = toolCallInfo?.arguments || {};
 
       // Create tool span
+      const spanName = `tool.${toolName}`;
+      logger.debug?.(`[otel] Span starting: name=${spanName}, session=${sessionKey}, startTime=${spanStartTime}`);
       const toolSpan = tracer.startSpan(
-        `tool.${toolName}`,
+        spanName,
         {
           kind: SpanKind.INTERNAL,
           startTime: spanStartTime,
@@ -956,7 +976,7 @@ export function registerHooks(
         // Set tool input from arguments
         toolSpan.setAttribute(
           "traceloop.entity.output",
-          redactText(JSON.stringify(toolArguments)),
+          JSON.stringify(toolArguments),
         );
       }
 
@@ -1020,11 +1040,8 @@ export function registerHooks(
         });
 
       // End span with correct end time
+      logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${durationMs}`);
       toolSpan.end(spanEndTime);
-
-      logger.debug?.(
-        `[otel] Tool span created from message: tool=${toolName}, toolCallId=${toolCallId}, startTime=${spanStartTime}, endTime=${spanEndTime}, duration=${durationMs}ms`,
-      );
     } catch (spanError) {
       logger.debug?.(
         `[otel] Error creating tool span from message: msg=${msg}, error=${spanError}`,
