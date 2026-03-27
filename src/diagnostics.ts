@@ -583,6 +583,7 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
 
 /**
  * Handle message.processed diagnostic event — ends root span after request completion.
+ * Also performs security check on messageInput and sets rootSpan status accordingly.
  */
 function handleMessageProcessed(evt: any, captureContent: boolean): void {
   const sessionKey = evt?.sessionKey || "unknown";
@@ -611,6 +612,23 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
     if (sessionCtx?.rootSpan) {
       sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
 
+      // Perform security check on messageInput
+      let securityEvent = null;
+      if (sessionCtx.messageInput && securityCounters) {
+        securityEvent = checkMessageSecurity(
+          sessionCtx.messageInput,
+          sessionCtx.rootSpan,
+          securityCounters,
+          sessionKey,
+        );
+        if (securityEvent) {
+          diagnosticsLogger.warn?.(
+            `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`,
+          );
+        }
+      }
+
+      // Set status based on outcome or security event
       if (!success) {
         const errorMsg = evt?.error || "";
         sessionCtx.rootSpan.setAttribute(
@@ -620,6 +638,15 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
         sessionCtx.rootSpan.setStatus({
           code: SpanStatusCode.ERROR,
           message: String(errorMsg).slice(0, 200),
+        });
+      } else if (
+        securityEvent &&
+        (securityEvent.severity === "critical" ||
+          securityEvent.severity === "high")
+      ) {
+        sessionCtx.rootSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
         });
       } else {
         sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });

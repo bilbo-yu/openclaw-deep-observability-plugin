@@ -19,6 +19,12 @@ export interface ToolCallInfo {
   arguments?: any;
 }
 
+export interface ContentInfo {
+  totalChars: number;
+  totalParts: number;
+  content: string;
+}
+
 /** Pending LLM span with start time for duration calculation */
 // export interface PendingLlmSpan {
 //   span: Span;
@@ -31,7 +37,6 @@ export interface SessionTraceContext {
   rootContext: Context;
   agentSpan?: Span;
   agentContext?: Context;
-  agentInput?: string;
   startTime: number;
   messageInput?: string;
   messageOutput?: string;

@@ -45,10 +45,14 @@ loadSdk();
  * @param text - The text to redact
  * @returns The redacted text, or the original text if SDK is not available
  */
+const MAX_TEXT_LENGTH = 1024;
 export function redactText(text: string): string {
   // if (redactSensitiveText) {
   //   return redactSensitiveText(text);
   // }
+  if (text.length > MAX_TEXT_LENGTH) {
+    return `${text.slice(0, MAX_TEXT_LENGTH)}...`;
+  }
   return text;
 }
 

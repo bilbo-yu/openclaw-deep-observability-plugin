@@ -32,6 +32,7 @@ import {
 import type { TelemetryRuntime } from "./telemetry.js";
 import type { OtelObservabilityConfig } from "./config.js";
 import {
+  ContentInfo,
   sessionContextMap,
   type SessionTraceContext,
   type ToolCallInfo,
@@ -64,14 +65,10 @@ class TokenUsage {
 
 // /** Map of sessionKey → active trace context. Cleaned up on agent_end. */
 // const sessionContextMap = new Map<string, SessionTraceContext>();
-interface ContentInfo {
-  totalChars: number;
-  totalParts: number;
-  content: string | undefined;
-}
-function parseContent(contentArray: any): ContentInfo {
-  if (contentArray && Array.isArray(contentArray)) {
-    const textParts = contentArray
+
+function redactToolResult(contentObject: any): ContentInfo {
+  if (contentObject && Array.isArray(contentObject)) {
+    const textParts = contentObject
       .filter((c: any) => c.type === "text")
       .map((c: any) => String(c.text || ""));
     const totalChars = textParts.reduce(
@@ -79,23 +76,24 @@ function parseContent(contentArray: any): ContentInfo {
       0,
     );
     // Record tool output
-    const output = textParts.join("\n").slice(0, 2048);
+    const output = textParts.join("\n");
     return {
       totalChars: totalChars,
-      totalParts: contentArray.length,
-      content: output,
+      totalParts: contentObject.length,
+      content: redactText(output),
     };
-  } else if (typeof contentArray === "string") {
+  } else if (typeof contentObject === "string") {
     return {
-      totalChars: contentArray.length,
+      totalChars: contentObject.length,
       totalParts: 1,
-      content: contentArray.slice(0, 2048),
+      content: redactText(contentObject),
     };
   } else {
+    const str = JSON.stringify(contentObject);
     return {
-      totalChars: 0,
-      totalParts: 0,
-      content: undefined,
+      totalChars: str.length,
+      totalParts: 1,
+      content: redactText(str),
     };
   }
 }
@@ -242,19 +240,7 @@ export function registerHooks(
   api.on(
     "llm_input",
     (event: any, ctx: any) => {
-      try {
-        const runId = event?.runId;
-        const sessionKey = ctx?.sessionKey || "unknown";
-        const provider = event?.provider || "unknown";
-        const model = event?.model || "unknown";
-        const prompt = event?.prompt || "";
-        const startTime = Date.now();
-        logger.debug?.(`[otel] llm_input event for session=${sessionKey} : ${JSON.stringify(event)}`);
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      return undefined;
+      return handleLLMInput(event, ctx);
     },
     { priority: -100 }
   );
@@ -262,22 +248,12 @@ export function registerHooks(
 
   // ── llm_output ───────────────────────────────────────────────────
   // Ends the pending LLM span created in llm_input.
+  // Sets messageOutput for use in message.processed handler.
 
   api.on(
     "llm_output",
     (event: any, ctx: any) => {
-      try {
-        const runId = event?.runId;
-        const sessionKey = ctx?.sessionKey || "unknown";
-        const model = event?.model || "unknown";
-        const lastAssistant = event?.lastAssistant;
-        logger.debug?.(`[otel] llm_output event for session=${sessionKey} : ${JSON.stringify(event)}`);
-
-      } catch {
-        // Never let telemetry errors break the main flow
-      }
-
-      return undefined;
+      return handleLLMOutput(event, ctx);
     },
     { priority: -100 }
   );
@@ -323,7 +299,7 @@ export function registerHooks(
   // Safety net: clean up stale session contexts (e.g., if agent_end never fires)
   setInterval(() => {
     const now = Date.now();
-    const maxAge = 5 * 60 * 1000; // 5 minutes
+    const maxAge = 30 * 60 * 1000; // 30 minutes
     for (const [key, ctx] of sessionContextMap) {
       if (now - ctx.startTime > maxAge) {
         try {
@@ -341,13 +317,70 @@ export function registerHooks(
   }, 60_000);
 
 
+
   // ════════════════════════════════════════════════════════════════════════════
   // Hook Handlers
   // ════════════════════════════════════════════════════════════════════════════
+
+  function handleLLMInput(event: any, ctx: any) { 
+    try {
+        logger.debug?.(`[otel] llm_input event : event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+        const sessionKey = ctx?.sessionKey || "unknown";
+        const systemPrompt = event?.systemPrompt || "";
+        const prompt = event?.prompt || "";
+        const messages = event?.historyMessages || [];
+        const sessionCtx = sessionContextMap.get(sessionKey);
+        const agentSpan = sessionCtx?.agentSpan;
+        
+        // Set messageInput from prompt
+        if (sessionCtx && prompt) {
+          sessionCtx.messageInput = prompt;
+        }
+        
+        if (agentSpan) {
+          const { messageList: promptList, totalChars } = buildMessageListForSpan(messages, systemPrompt, prompt);
+          
+          // 设置统计属性（始终设置）
+          agentSpan.setAttribute("gen_ai.system_instructions.chars", systemPrompt.length);
+          agentSpan.setAttribute("gen_ai.input.messages.chars", totalChars);
+          agentSpan.setAttribute("gen_ai.input.messages.size", promptList.length);
+          
+          // 只有 captureContent 为 true 时才设置详细内容
+          if (captureContent) {
+            agentSpan.setAttribute("traceloop.entity.input", JSON.stringify(promptList));
+          }
+          
+        }
+      } catch {
+        // Never let telemetry errors break the main flow
+      }
+
+      return undefined;
+  }
+
+
+  function handleLLMOutput(event: any, ctx: any) {
+    try {
+      logger.debug?.(`[otel] llm_output event : ${JSON.stringify(ctx)}`);
+      const sessionKey = ctx?.sessionKey || "unknown";
+      const lastAssistant = event?.lastAssistant;
+
+      // Set messageOutput from assistantTexts (redacted)
+      const sessionCtx = sessionContextMap.get(sessionKey);
+      if (sessionCtx && lastAssistant) {
+        sessionCtx.messageOutput = redactText(lastAssistant);
+      }
+
+    } catch {
+      // Never let telemetry errors break the main flow
+    }
+
+    return undefined;
+  }
   function handleBeforeAgentStart(event: any, ctx: any) {
     try {
       logger.debug?.(
-        `[otel] before_agent_start: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+        `[otel] before_agent_start event : ${JSON.stringify(ctx)}`
       );
       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
       const sessionId = event?.sessionId || sessionKey;
@@ -373,7 +406,7 @@ export function registerHooks(
         },
         parentContext
       );
-
+      
       const agentContext = trace.setSpan(parentContext, agentSpan);
 
       // Store agent span context for tool spans
@@ -382,8 +415,6 @@ export function registerHooks(
         sessionCtx.agentContext = agentContext;
         // Store the length of historical messages before this conversation
         sessionCtx.startMessagesLength = event?.messages?.length || 0;
-        // record message Input
-        sessionCtx.agentInput = prompt;
       } else {
         // No root span (e.g., heartbeat) — create a standalone context
         sessionContextMap.set(sessionKey, {
@@ -393,9 +424,7 @@ export function registerHooks(
           agentContext,
           startTime: Date.now(),
           pendingToolSpans: new Map(),
-          // toolCalls: new Map(),
           startMessagesLength: event?.messages?.length || 0,
-          agentInput: prompt,
         });
       }
 
@@ -478,118 +507,27 @@ export function registerHooks(
       let success = event?.success !== false;
       const errorMsg = event?.error;
       const messages: any[] = event?.messages || [];
-
-      // Try to get usage from diagnostic events (includes cost!)
-      // const diagUsage = getPendingUsage(sessionKey);
-      // Fallback: Extract token usage from the messages array
-      // let totalInputTokens = 0;
-      // let totalOutputTokens = 0;
-      // let cacheReadTokens = 0;
-      // let cacheWriteTokens = 0;
-      // let model = "unknown";
-      // let costUsd: number | undefined;
-      // if (diagUsage) {
-      //   // Use diagnostic event data (more accurate, includes cost)
-      //   totalInputTokens = diagUsage.usage.input || 0;
-      //   totalOutputTokens = diagUsage.usage.output || 0;
-      //   cacheReadTokens = diagUsage.usage.cacheRead || 0;
-      //   cacheWriteTokens = diagUsage.usage.cacheWrite || 0;
-      //   model = diagUsage.model || "unknown";
-      //   costUsd = diagUsage.costUsd;
-      //   logger.debug?.(`[otel] agent_end using diagnostic data: cost=$${costUsd?.toFixed(4) || "?"}`);
-      // } else {
-      //   // Fallback: parse messages manually
-      //   for (const msg of messages) {
-      //     if (msg?.role === "assistant" && msg?.usage) {
-      //       const u = msg.usage;
-      //       // pi-ai stores usage as .input/.output (normalized names)
-      //       if (typeof u.input === "number") totalInputTokens += u.input;
-      //       else if (typeof u.inputTokens === "number") totalInputTokens += u.inputTokens;
-      //       else if (typeof u.input_tokens === "number") totalInputTokens += u.input_tokens;
-      //       if (typeof u.output === "number") totalOutputTokens += u.output;
-      //       else if (typeof u.outputTokens === "number") totalOutputTokens += u.outputTokens;
-      //       else if (typeof u.output_tokens === "number") totalOutputTokens += u.output_tokens;
-      //       if (typeof u.cacheRead === "number") cacheReadTokens += u.cacheRead;
-      //       if (typeof u.cacheWrite === "number") cacheWriteTokens += u.cacheWrite;
-      //     }
-      //     if (msg?.role === "assistant" && msg?.model) {
-      //       model = msg.model;
-      //     }
-      //   }
-      // }
-      // const totalTokens = totalInputTokens + totalOutputTokens + cacheReadTokens + cacheWriteTokens;
-      // logger.debug?.(`[otel] agent_end tokens: input=${totalInputTokens}, output=${totalOutputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, model=${model}`);
       const sessionCtx = sessionContextMap.get(sessionKey);
+      const agentSpan = sessionCtx?.agentSpan;
 
       // End the agent turn span
-      if (sessionCtx?.agentSpan) {
-        const agentSpan = sessionCtx.agentSpan;
-
-        // Token usage — GenAI semantic convention attributes
-        // agentSpan.setAttribute("gen_ai.usage.input_tokens", totalInputTokens);
-        // agentSpan.setAttribute("gen_ai.usage.output_tokens", totalOutputTokens);
-        // agentSpan.setAttribute("gen_ai.usage.total_tokens", totalTokens);
-        // Cache tokens (custom attributes)
-        // if (cacheReadTokens > 0) {
-        //   agentSpan.setAttribute("gen_ai.usage.cache_read_tokens", cacheReadTokens);
-        // }
-        // if (cacheWriteTokens > 0) {
-        //   agentSpan.setAttribute("gen_ai.usage.cache_write_tokens", cacheWriteTokens);
-        // }
-        // Cost (from diagnostic events) — this is the key addition!
-        // if (typeof costUsd === "number") {
-        //   agentSpan.setAttribute("openclaw.llm.cost_usd", costUsd);
-        // }
-        // Context window (from diagnostic events)
-        // if (diagUsage?.context?.limit) {
-        //   agentSpan.setAttribute("openclaw.context.limit", diagUsage.context.limit);
-        // }
-        // if (diagUsage?.context?.used) {
-        //   agentSpan.setAttribute("openclaw.context.used", diagUsage.context.used);
-        // }
-        const firstMsg = messages[sessionCtx.startMessagesLength || 0] || {};
+      if (agentSpan) {
+        // const firstMsg = messages[sessionCtx.startMessagesLength || 0] || {};
         const lastMsg = messages[messages.length - 1] || {};
-        const input = firstMsg.role === "user" ? firstMsg.content : {};
+        // const input = firstMsg.role === "user" ? firstMsg.content : {};
         const output = lastMsg.role === "assistant" ? lastMsg.content : {};
-        const inputInfo = parseContent(input);
-        const outputInfo = parseContent(output);
+        sessionCtx.messageOutput = redactContent(output);
+        
 
-        let securityEvent = null;
-        if (!sessionCtx.agentInput) {
-          sessionCtx.agentInput = inputInfo.content;
-        }
-        if (sessionCtx.agentInput) {
-          if (captureContent) {
-            agentSpan.setAttribute(
-              "traceloop.entity.input",
-              redactText(sessionCtx.agentInput)
-            );
-          }
-          if (!sessionCtx.messageInput) {
-            //use the first user message as root span input
-            sessionCtx.messageInput = sessionCtx.agentInput;
-          }
-          securityEvent = checkMessageSecurity(
-            sessionCtx.agentInput,
-            agentSpan,
-            securityCounters,
-            sessionKey
-          );
-          if (securityEvent) {
-            logger.warn?.(
-              `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`
-            );
-          }
-        }
-        if (outputInfo.content) {
-          if (captureContent) {
+        const { messageList, totalChars } = buildMessageListForSpan(messages.slice(sessionCtx.startMessagesLength || 0))
+        agentSpan.setAttribute("gen_ai.output.messages.size", messageList.length);
+        agentSpan.setAttribute("gen_ai.output.messages.chars", totalChars);
+        if (captureContent) {
             agentSpan.setAttribute(
               "traceloop.entity.output",
-              redactText(outputInfo.content)
+              JSON.stringify(messageList)
             );
           }
-          sessionCtx.messageOutput = outputInfo.content;
-        }
 
         // Create LLM spans and tool spans for new messages in this conversation
         const {
@@ -618,6 +556,7 @@ export function registerHooks(
         logger.debug?.(
           `[otel] agent_end tokens: input=${inputTokens}, output=${outputTokens}, cache_read=${cacheReadTokens}, cache_write=${cacheWriteTokens}, total_tokens=${totalTokens}, model=${model}, provider=${provider}`
         );
+
         if (errorMsg) {
           agentSpan.setAttribute(
             "openclaw.agent.error",
@@ -628,13 +567,6 @@ export function registerHooks(
             message: String(errorMsg).slice(0, 200),
           });
           success = false;
-        } else if (securityEvent &&
-          (securityEvent.severity === "critical" ||
-            securityEvent.severity === "high")) {
-          agentSpan.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
-          });
         } else {
           agentSpan.setStatus({ code: SpanStatusCode.OK });
         }
@@ -693,13 +625,12 @@ export function registerHooks(
         const message = event?.message;
         if (message) {
           const contentArray = message?.content;
-          const { totalChars, totalParts, content } = parseContent(contentArray);
+          const { totalChars, totalParts, content } = redactToolResult(contentArray);
           // Record result_chars and result_parts
-          span.setAttribute("openclaw.tool.result_chars", totalChars);
-          span.setAttribute("openclaw.tool.result_parts", totalParts);
+          span.setAttribute("gen_ai.tool.call.result.chars", totalChars);
           // Record tool output
           if (captureContent && content) {
-            span.setAttribute("traceloop.entity.output", redactText(content));
+            span.setAttribute("traceloop.entity.output", content);
           }
         }
 
@@ -772,7 +703,7 @@ export function registerHooks(
   function handleBeforeToolCall(event: any, ctx: any) {
     try {
       logger.debug?.(
-        `[otel] Before Tool call: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
+        `[otel] before_tool_call event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
       );
 
       const toolName = event?.toolName || "unknown";
@@ -800,15 +731,6 @@ export function registerHooks(
         parentContext
       );
 
-      // Record tool input
-      if (captureContent && params) {
-        if (params.content) {
-          params.content = "***";
-        }
-        const input = JSON.stringify(params).slice(0, 1000);
-        span.setAttribute("traceloop.entity.input", redactText(input));
-      }
-
       // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
       logger.debug?.(
         `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(params)}`
@@ -825,6 +747,17 @@ export function registerHooks(
         logger.warn?.(
           `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`
         );
+      }
+      // Record tool input
+      if (params) {
+        const inputSize = JSON.stringify(params).length;
+        span.setAttribute("gen_ai.tool.call.arguments.chars", inputSize);
+        if (captureContent) {
+          if (params.content) {
+            params.content = "***";
+          }
+          span.setAttribute("traceloop.entity.input", redactText(JSON.stringify(params)));
+        }
       }
 
       // Store span in pendingToolSpans for later ending in tool_result_persist
@@ -883,7 +816,7 @@ export function registerHooks(
       // LLM input
       let inputText;
       if (prevMsg?.role === "user") {
-        inputText = JSON.stringify(prevMsg?.content).slice(0, 2048);
+        inputText = JSON.stringify(prevMsg?.content);
       }
 
       // Get model and provider from message
@@ -914,7 +847,7 @@ export function registerHooks(
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
       if (captureContent && contentArray) {
-        const outputText = JSON.stringify(contentArray).slice(0, 2048);
+        const outputText = JSON.stringify(contentArray);
         llmSpan.setAttribute("traceloop.entity.output", redactText(outputText));
       }
 
@@ -1023,7 +956,7 @@ export function registerHooks(
         // Set tool input from arguments
         toolSpan.setAttribute(
           "traceloop.entity.output",
-          JSON.stringify(toolArguments).slice(0, 2048),
+          redactText(JSON.stringify(toolArguments)),
         );
       }
 
@@ -1052,12 +985,11 @@ export function registerHooks(
 
       // Set tool output from content
       const contentArray = msg.content;
-      const { totalChars, totalParts, content } = parseContent(contentArray);
+      const { totalChars, totalParts, content } = redactToolResult(contentArray);
       if (captureContent && content) {
         toolSpan.setAttribute("traceloop.entity.output", content);
       }
-      toolSpan.setAttribute("openclaw.tool.result_chars", totalChars);
-      toolSpan.setAttribute("openclaw.tool.result_parts", totalParts);
+      toolSpan.setAttribute("gen_ai.tool.call.result.chars", totalChars);
 
       // Set status based on isError or securityEvent (unified logic)
       if (isError) {
@@ -1207,5 +1139,83 @@ export function registerHooks(
       }
     }
     return tokenUsage;
+  }
+
+  
+  /**
+   * 对 content 进行脱敏处理
+   * - 字符串：直接用 redactText 处理
+   * - 数组：对 text 和 thinking 字段用 redactText 处理
+   * - 其他：JSON 序列化后用 redactText 处理
+   */
+  function redactContent(content: any): any {
+    if (typeof content === "string") {
+      return redactText(content);
+    }
+    
+    if (Array.isArray(content)) {
+      return content.map((item) => {
+        if (item?.type === "text" && item?.text) {
+          return { ...item, text: redactText(item.text) };
+        } else if (item?.type === "thinking" && item?.thinking) {
+          return { ...item, thinking: redactText(item.thinking) };
+        }
+        return item;
+      });
+    }
+    
+    return redactText(JSON.stringify(content));
+  }
+
+  /**
+   * 构建可以设置到span里的消息列表
+   * - systemPrompt: 系统提示
+   * - messages: 历史消息
+   * - prompt: 当前用户输入
+   * 返回 messageList 和 totalChars
+   */
+  function buildMessageListForSpan(
+    messages: any[],
+    systemPrompt?: string,
+    prompt?: string
+  ): { messageList: any[]; totalChars: number } {
+    const messageList: any[] = [];
+    let totalChars = 0;
+    
+    // 1. 添加 system prompt
+    if (systemPrompt) {
+      messageList.push({
+        role: "system",
+        content: redactText(systemPrompt)
+      });
+      totalChars += systemPrompt.length;
+    }
+    
+    // 2. 添加历史消息
+    for (const msg of messages) {
+      if (msg?.role && msg?.content) {
+        totalChars += JSON.stringify(msg.content).length;
+        
+        const filteredMsg: any = {};
+        if (msg.role) filteredMsg.role = msg.role;
+        if (msg.content) filteredMsg.content = redactContent(msg.content);
+        if (msg.stopReason) filteredMsg.stopReason = msg.stopReason;
+        if (msg.toolCallId) filteredMsg.toolCallId = msg.toolCallId;
+        if (msg.toolName) filteredMsg.toolName = msg.toolName;
+        
+        messageList.push(filteredMsg);
+      }
+    }
+    
+    // 3. 添加当前用户输入
+    if (prompt) {
+      messageList.push({
+        role: "user",
+        content: redactText(prompt)
+      });
+      totalChars += prompt.length;
+    }
+    
+    return { messageList, totalChars };
   }
 }
