@@ -572,10 +572,7 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
       startTime: Date.now(),
       pendingToolSpans: new Map(),
     });
-
-    diagnosticsLogger.debug?.(
-      `[otel] Root span started (message.queued) for session=${sessionKey}`,
-    );
+    diagnosticsLogger.debug?.(`[otel] Span starting: name=openclaw.request, session=${sessionKey}`);
   } catch (error) {
     diagnosticsLogger.error?.(`[otel] Error in handleMessageQueued: ${error}`);
   }
@@ -674,10 +671,7 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
       }
 
       sessionCtx.rootSpan.end();
-
-      diagnosticsLogger.debug?.(
-        `[otel] Root span ended (message.processed) for session=${sessionKey}, duration=${totalMs}ms`,
-      );
+      diagnosticsLogger.debug?.(`[otel] Span ending: name=openclaw.request, session=${sessionKey}, duration=${totalMs}ms`);
     }
 
   } catch (error) {

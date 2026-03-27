@@ -259,6 +259,18 @@ export function registerHooks(
   );
   logger.info("[otel] Registered llm_output hook (via api.on)");
 
+  // ── before_prompt_build ─────────────────────────────────────────
+  // Injects skill tracking instructions into the prompt context.
+
+  api.on(
+    "before_prompt_build",
+    (event: any, ctx: any) => {
+      return handleBeforePromptBuild(event, ctx);
+    },
+    { priority: -100 }
+  );
+  logger.info("[otel] Registered before_prompt_build hook (via api.on)");
+
 
 
   // ═══════════════════════════════════════════════════════════════════
@@ -392,6 +404,20 @@ export function registerHooks(
 
     return undefined;
   }
+
+  function handleBeforePromptBuild(event: any, ctx: any) {
+    try {
+      logger.debug?.(`[otel] before_prompt_build event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+    } catch {
+      // Never let telemetry errors break the main flow
+    }
+
+    // Return skill tracking instructions to be prepended to the prompt
+    return {
+      prependContext: "Instructions: \nWhen you think through the problem, end your internal reasoning with a `<skills>` tag listing the skills you used. Format: `<skills>skill1,skill2,...</skills>`. Do not include this tag in your final answer.\nUser input:"
+    };
+  }
+
   function handleBeforeAgentStart(event: any, ctx: any) {
     try {
       logger.debug?.(
@@ -437,6 +463,9 @@ export function registerHooks(
         // Store the length of historical messages before this conversation
         sessionCtx.startMessagesLength = event?.messages?.length || 0;
       } else {
+        logger.warn?.(
+          `[otel] No root span found for session=${sessionKey}, setting agent span as root span`
+        );
         // No root span (e.g., heartbeat) — create a standalone context
         sessionContextMap.set(sessionKey, {
           rootSpan: agentSpan,
@@ -523,7 +552,7 @@ export function registerHooks(
   function handleAgentEnd(event: any, ctx: any) {
     try {
       logger.debug?.(
-        `[otel] agent_end event: ${JSON.stringify(event)}, ctx: ${JSON.stringify(ctx)}`
+        `[otel] agent_end event: ctx: ${JSON.stringify(ctx)}`
       );
       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
       const agentId = event?.agentId || ctx?.agentId || "unknown";
@@ -613,6 +642,8 @@ export function registerHooks(
         logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}, success=${success}`);
         agentSpan.end();
         sessionCtx.agentSpan = undefined;
+      } else {
+        logger.warn?.(`[otel] No agent span found for session=${sessionKey}, cannot end`);
       }
 
       // End the root request span
