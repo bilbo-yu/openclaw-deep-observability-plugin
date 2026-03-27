@@ -343,6 +343,15 @@ export function registerHooks(
           sessionCtx.messageInput = prompt;
         }
         
+        // Extract skills from systemPrompt and save to sessionCtx
+        if (sessionCtx && systemPrompt) {
+          const skills = extractSkillsFromSystemPrompt(systemPrompt);
+          if (skills.length > 0) {
+            sessionCtx.skills = skills;
+            logger.debug?.(`[otel] Extracted skills from systemPrompt: ${JSON.stringify(skills)}`);
+          }
+        }
+        
         if (agentSpan) {
           const { messageList: promptList, totalChars } = buildMessageListForSpan(messages, systemPrompt, prompt);
           
@@ -367,14 +376,14 @@ export function registerHooks(
 
   function handleLLMOutput(event: any, ctx: any) {
     try {
-      logger.debug?.(`[otel] llm_output event : event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+      logger.debug?.(`[otel] llm_output event : ctx=${JSON.stringify(ctx)}`);
       const sessionKey = ctx?.sessionKey || "unknown";
       const lastAssistantTexts = event?.assistantTexts;
 
       // Set messageOutput from assistantTexts (redacted)
       const sessionCtx = sessionContextMap.get(sessionKey);
-      if (sessionCtx && lastAssistantTexts) {
-        sessionCtx.messageOutput = lastAssistantTexts.join("\n");
+      if (sessionCtx && lastAssistantTexts && Array.isArray(lastAssistantTexts) && lastAssistantTexts.length > 0) {
+        sessionCtx.messageOutput = lastAssistantTexts[lastAssistantTexts.length-1];
       }
 
     } catch {
@@ -392,26 +401,32 @@ export function registerHooks(
       const sessionId = event?.sessionId || sessionKey;
       const agentId = event?.agentId || ctx?.agentId || "unknown";
       // const model = event?.model || "unknown";
-      const prompt = event?.prompt;
+      // const prompt = event?.prompt;
       // logger.debug?.(
       //   `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
       // );
       const sessionCtx = sessionContextMap.get(sessionKey);
       const parentContext = sessionCtx?.rootContext || context.active();
-
-      // Create agent turn span as child of root span
-      const agentSpan = tracer.startSpan(
-        "openclaw.agent.turn",
-        {
-          kind: SpanKind.INTERNAL,
-          attributes: {
-            "gen_ai.agent.id": agentId,
-            "openclaw.session.key": sessionKey,
-            "gen_ai.conversation.id": sessionId,
+      let agentSpan = sessionCtx?.agentSpan;
+      if (!agentSpan) {
+        // Create agent turn span as child of root span
+        agentSpan = tracer.startSpan(
+          "openclaw.agent.turn",
+          {
+            kind: SpanKind.INTERNAL,
+            attributes: {
+              "gen_ai.agent.id": agentId,
+              "openclaw.session.key": sessionKey,
+              "gen_ai.conversation.id": sessionId,
+            },
           },
-        },
-        parentContext
-      );
+          parentContext
+        );
+        
+        logger.debug?.(
+          `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
+        );
+      }
       
       const agentContext = trace.setSpan(parentContext, agentSpan);
 
@@ -434,9 +449,6 @@ export function registerHooks(
         });
       }
 
-      logger.debug?.(
-        `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
-      );
     } catch {
       logger.warn?.(
         `[otel] before_agent_start hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
@@ -808,6 +820,20 @@ export function registerHooks(
 // Utility Functions
 // ════════════════════════════════════════════════════════════════════════════
   
+  /**
+   * 从 systemPrompt 中提取所有 skills 名字列表
+   * @param systemPrompt - 系统提示内容
+   * @returns skills 名字数组
+   */
+  function extractSkillsFromSystemPrompt(systemPrompt: string): string[] {
+    const skillsMatch = systemPrompt.match(/<available_skills>[\s\S]*?<\/available_skills>/);
+    if (skillsMatch) {
+      const nameMatches = skillsMatch[0].matchAll(/<name>([^<]+)<\/name>/g);
+      return Array.from(nameMatches, m => m[1]);
+    }
+    return [];
+  }
+
   /**
    * Create an LLM span from an assistant message.
    *

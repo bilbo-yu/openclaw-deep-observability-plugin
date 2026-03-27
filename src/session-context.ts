@@ -40,6 +40,7 @@ export interface SessionTraceContext {
   startTime: number;
   messageInput?: string;
   messageOutput?: string;
+  skills?: string[];
   pendingToolSpans: Map<string, PendingToolSpan>;
   // toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
