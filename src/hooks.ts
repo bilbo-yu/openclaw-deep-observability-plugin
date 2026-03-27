@@ -835,11 +835,42 @@ export function registerHooks(
   }
 
   /**
+   * 从内容中提取 <skills>skill#1,skill#2</skills> 格式的技能名称列表
+   * @param content - 消息内容（字符串或数组）
+   * @returns 技能名称数组
+   */
+  function extractSkillsFromContent(content: any): string[] {
+    const skills: string[] = [];
+    const extractFromString = (text: string) => {
+      const match = text.match(/<skills>([^<]*)<\/skills>/);
+      if (match && match[1]) {
+        const skillNames = match[1].split(',').map(s => s.trim()).filter(s => s.length > 0);
+        skills.push(...skillNames);
+      }
+    };
+
+    if (typeof content === "string") {
+      extractFromString(content);
+    } else if (Array.isArray(content)) {
+      for (const item of content) {
+        if (item?.type === "text" && typeof item?.text === "string") {
+          extractFromString(item.text);
+        } else if (item?.type === "thinking" && typeof item?.thinking === "string") {
+          extractFromString(item.thinking);
+        }
+      }
+    }
+    return [...new Set(skills)]; // 去重
+  }
+
+  /**
    * Create an LLM span from an assistant message.
+   * Also creates skill spans for skills referenced in the content.
    *
    * @param msg - The assistant message
    * @param prevMsg - The previous message (for input extraction)
    * @param parentContext - Parent context for the span
+   * @param sessionCtx - Session trace context for accessing skills list
    * @param sessionKey - Session key for logging
    * @param spanStartTime - The start time of the span
    * @param spanEndTime - The end time of the span
@@ -848,6 +879,7 @@ export function registerHooks(
     msg: any,
     prevMsg: any | undefined,
     parentContext: Context,
+    sessionCtx: SessionTraceContext | undefined,
     sessionKey: string,
     spanStartTime: number,
     spanEndTime: number,
@@ -955,6 +987,48 @@ export function registerHooks(
       // End span with correct end time
       logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${spanEndTime - spanStartTime}`);
       llmSpan.end(spanEndTime);
+
+      // ═══════════════════════════════════════════════════════════════
+      // Create skill spans for skills referenced in the content
+      // Extract skills from thinking and text fields in the content
+      // ═══════════════════════════════════════════════════════════════
+      if (sessionCtx?.skills && sessionCtx.skills.length > 0) {
+        const contentSkills = extractSkillsFromContent(contentArray);
+        if (contentSkills.length > 0) {
+          // Filter skills that exist in sessionCtx.skills
+          const matchedSkills = contentSkills.filter(skill => 
+            sessionCtx.skills!.includes(skill)
+          );
+          
+          if (matchedSkills.length > 0) {
+            logger.debug?.(`[otel] Creating skill spans for matched skills: ${JSON.stringify(matchedSkills)}, session=${sessionKey}`);
+            
+            // Create skill spans with LLM span end time as start time (instant spans)
+            const llmSpanContext = trace.setSpan(parentContext, llmSpan);
+            for (const skillName of matchedSkills) {
+              const skillSpanName = `skill.${skillName}`;
+              logger.debug?.(`[otel] Span starting: name=${skillSpanName}, session=${sessionKey}, startTime=${spanEndTime}`);
+              const skillSpan = tracer.startSpan(
+                skillSpanName,
+                {
+                  kind: SpanKind.INTERNAL,
+                  startTime: spanEndTime,
+                  attributes: {
+                    "gen_ai.operation.name": "skill",
+                    "gen_ai.skill.name": skillName,
+                    "openclaw.session.key": sessionKey,
+                  },
+                },
+                llmSpanContext,
+              );
+              skillSpan.setStatus({ code: SpanStatusCode.OK });
+              // End span immediately (instant span)
+              logger.debug?.(`[otel] Span ending: name=${skillSpanName}, session=${sessionKey}, endTime=${spanEndTime}`);
+              skillSpan.end(spanEndTime);
+            }
+          }
+        }
+      }
     } catch (spanError) {
       logger.debug?.(
         `[otel] Error creating LLM span from message: msg = ${msg}, error=${spanError}`,
@@ -1155,6 +1229,7 @@ export function registerHooks(
           msg,
           prevMsg,
           parentContext,
+          sessionCtx,
           sessionKey,
           spanStartTime,
           spanEndTime,
