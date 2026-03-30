@@ -607,7 +607,7 @@ Upon completing your reasoning, you are required to identify and disclose the sp
         if (usedSkills.length > 0) {
           // Deduplicate usedSkills
           const uniqueSkills = [...new Set(usedSkills)];
-          agentSpan.setAttribute("gen_ai.skill.used_skills", uniqueSkills.join(","));
+          agentSpan.setAttribute("gen_ai.agent.used_skills", uniqueSkills.join(","));
           logger.debug?.(`[otel] agent_end used_skills: ${uniqueSkills.join(",")}`);
           
           // Increment skill usage counter for each skill
