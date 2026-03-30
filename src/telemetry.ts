@@ -539,7 +539,7 @@ export function initTelemetry(
     skillUsed: meter.createCounter("gen_ai.agent.skill_used", {
       description: "Skill usage counter",
       unit: "1",
-    });
+    })
   };
 
   const histograms: OtelHistograms = {
