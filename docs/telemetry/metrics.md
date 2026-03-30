@@ -37,11 +37,18 @@ These metrics follow the [OpenTelemetry GenAI Semantic Conventions](https://open
 
 | Attribute | Description |
 |-----------|-------------|
-| `gen_ai.request.model` | Model requested |
-| `gen_ai.response.model` | Model used for response |
-| `gen_ai.system` | Provider name |
+| `gen_ai.operation.name` | Operation type: `execute_tool` (tool execution), `chat` (LLM calls) |
+| `gen_ai.request.model` | Model requested (LLM calls only) |
+| `gen_ai.response.model` | Model used for response (LLM calls only) |
+| `gen_ai.system` | Provider name (LLM calls only) |
+| `gen_ai.tool.name` | Tool name (tool execution only) |
+| `error.type` | Error type: `tool_error` if tool execution failed, empty otherwise (tool execution only) |
 
 **Bucket Boundaries (seconds):** 0, 1, 2, 4, 6, 8, 10, 15, 20, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000
+
+This metric is recorded for two operation types:
+- **LLM calls**: Uses `gen_ai.operation.name="chat"`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.system` attributes
+- **Tool executions**: Uses `gen_ai.operation.name="execute_tool"`, `gen_ai.tool.name`, `error.type` attributes
 
 ---
 
@@ -114,6 +121,25 @@ End-to-end time for a complete agent turn. This is the user-perceived latency.
 | Attribute | Description |
 |-----------|-------------|
 | `openclaw.attempt` | Attempt number |
+
+---
+
+### `gen_ai.agent.skill_usage_total`
+
+| | |
+|---|---|
+| **Type** | Counter |
+| **Unit** | 1 |
+| **Description** | Skill usage counter - records each skill used by the agent |
+
+**Attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `gen_ai.skill.name` | Name of the skill used |
+| `gen_ai.agent.id` | Agent identifier |
+
+This counter is incremented for each unique skill used during an agent turn. Skills are extracted from the LLM's response when it outputs `Skills Used: skill_name_1, skill_name_2`.
 
 ## Token & Cost Metrics
 

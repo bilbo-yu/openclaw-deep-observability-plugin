@@ -77,8 +77,9 @@ Created by `before_agent_start`, ended by `agent_end`. Child of the request span
 | `gen_ai.usage.cache_write_tokens` | int | Tokens written to cache |
 | `gen_ai.usage.total_tokens` | int | Sum of all token types |
 | `openclaw.agent.duration_ms` | int | Turn duration in milliseconds |
-| `traceloop.entity.input` | string | User message (if `captureContent` enabled) |
-| `traceloop.entity.output` | string | Agent response (if `captureContent` enabled) |
+| `gen_ai.agent.used_skills` | string | Comma-separated list of skills used by the agent (if any skills were used) |
+            `traceloop.entity.input` | string | User message (if `captureContent` enabled) |
+            `traceloop.entity.output` | string | Agent response (if `captureContent` enabled) |
 
 !!! note "Token Counts"
     Token counts are **summed across all assistant messages** in the turn. If the agent makes multiple LLM calls (e.g., tool use loop), the totals reflect all calls combined.

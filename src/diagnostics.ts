@@ -298,7 +298,10 @@ function handleModelUsage(
   if (typeof evt.durationMs === "number") {
     histograms.aiOpDurationHistogram.record(
       evt.durationMs / 1000.0,
-      otelMetricAttrs,
+      {
+        ...otelMetricAttrs,
+        "gen_ai.operation.name": "chat"
+      }
     );
     // Official style
     histograms.runDuration.record(evt.durationMs, officialAttrs);
