@@ -52,6 +52,7 @@ class TokenUsage {
   totalTokens: number = 0;
   model?: string | null;
   provider?: string | null;
+  usedSkills: string[] = [];
 }
 
 /** Active trace context for a session — allows connecting spans into one trace. */
@@ -414,19 +415,11 @@ export function registerHooks(
 
     // Return skill tracking instructions to be prepended to the prompt
     return {
-      prependContext: `<skill_tracking_instructions>
-During your internal reasoning process, when you decide to use one or more available skills, output a skill declaration tag at the end of your thinking block.
-
-Format: <skills>skill_name_1,skill_name_2</skills>
-
-Rules:
-- Only include skills you will actually invoke
-- Use comma to separate multiple skill names
-- This tag is for internal tracking only, do not include it in your final response
-- If no skills will be used, omit this tag entirely
-</skill_tracking_instructions>
-
-User input: `
+      prependContext: `# Instruction:
+Upon completing your reasoning, you are required to identify and disclose the specific skills employed. Append this information to the end of your response using the specified format.
+# Format:
+- Skills Used: skill_name_1, skill_name_2
+# User Question: `
     };
   }
 
@@ -602,13 +595,29 @@ User input: `
 
         // Create LLM spans and tool spans for new messages in this conversation
         const {
-          inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, totalTokens = 0, model, provider,
+          inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, totalTokens = 0, model, provider, usedSkills = [],
         } = createSpansFromMessages(
           messages,
           sessionCtx,
           sessionKey,
           agentId
         );
+        
+        // Set used_skills attribute on agent span
+        if (usedSkills.length > 0) {
+          // Deduplicate usedSkills
+          const uniqueSkills = [...new Set(usedSkills)];
+          agentSpan.setAttribute("gen_ai.skill.used_skills", uniqueSkills.join(","));
+          logger.debug?.(`[otel] agent_end used_skills: ${uniqueSkills.join(",")}`);
+          
+          // Increment skill usage counter for each skill
+          for (const skill of uniqueSkills) {
+            counters.skillUsed.add(1, {
+              "gen_ai.skill.name": skill,
+              "gen_ai.agent.id": agentId,
+            });
+          }
+        }
         // agentSpan.setAttribute("gen_ai.system", provider || "unknown");
         // agentSpan.setAttribute("gen_ai.provider.name", provider || "unknown");
         // agentSpan.setAttribute("gen_ai.request.model", model || "unknown");
@@ -878,14 +887,15 @@ User input: `
   }
 
   /**
-   * 从内容中提取 <skills>skill#1,skill#2</skills> 格式的技能名称列表
+   * 从内容中提取 "Skills Used: skill_name_1, skill_name_2" 格式的技能名称列表
    * @param content - 消息内容（字符串或数组）
    * @returns 技能名称数组
    */
   function extractSkillsFromContent(content: any): string[] {
     const skills: string[] = [];
     const extractFromString = (text: string) => {
-      const match = text.match(/<skills>([^<]*)<\/skills>/);
+      // Match "Skills Used: skill_name_1, skill_name_2" format (case insensitive)
+      const match = text.match(/Skills Used:\s*([^\n]+)/i);
       if (match && match[1]) {
         const skillNames = match[1].split(',').map(s => s.trim()).filter(s => s.length > 0);
         skills.push(...skillNames);
@@ -933,6 +943,7 @@ User input: `
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       totalTokens: 0,
+      usedSkills: [],
     };
     try {
       // LLM input
@@ -1031,7 +1042,6 @@ User input: `
       
 
       // ═══════════════════════════════════════════════════════════════
-      // Create skill spans for skills referenced in the content
       // Extract skills from thinking and text fields in the content
       // ═══════════════════════════════════════════════════════════════
       if (sessionCtx?.skills && sessionCtx.skills.length > 0) {
@@ -1045,29 +1055,32 @@ User input: `
           if (matchedSkills.length > 0) {
             logger.debug?.(`[otel] Creating skill spans for matched skills: ${JSON.stringify(matchedSkills)}, session=${sessionKey}`);
             
+            // Store matched skills in tokenUsage for return
+            tokenUsage.usedSkills = matchedSkills;
+            
             // Create skill spans with LLM span end time as start time (instant spans)
-            const llmSpanContext = trace.setSpan(parentContext, llmSpan);
-            for (const skillName of matchedSkills) {
-              const skillSpanName = `skill.${skillName}`;
-              logger.debug?.(`[otel] Span starting: name=${skillSpanName}, session=${sessionKey}, startTime=${spanEndTime}`);
-              const skillSpan = tracer.startSpan(
-                skillSpanName,
-                {
-                  kind: SpanKind.INTERNAL,
-                  startTime: spanEndTime,
-                  attributes: {
-                    "gen_ai.operation.name": "skill",
-                    "gen_ai.skill.name": skillName,
-                    "openclaw.session.key": sessionKey,
-                  },
-                },
-                llmSpanContext,
-              );
-              skillSpan.setStatus({ code: SpanStatusCode.OK });
-              // End span immediately (instant span)
-              logger.debug?.(`[otel] Span ending: name=${skillSpanName}, session=${sessionKey}, endTime=${spanEndTime}`);
-              skillSpan.end(spanEndTime);
-            }
+            // const llmSpanContext = trace.setSpan(parentContext, llmSpan);
+            // for (const skillName of matchedSkills) {
+            //   const skillSpanName = `skill.${skillName}`;
+            //   logger.debug?.(`[otel] Span starting: name=${skillSpanName}, session=${sessionKey}, startTime=${spanEndTime}`);
+            //   const skillSpan = tracer.startSpan(
+            //     skillSpanName,
+            //     {
+            //       kind: SpanKind.INTERNAL,
+            //       startTime: spanEndTime,
+            //       attributes: {
+            //         "gen_ai.operation.name": "skill",
+            //         "gen_ai.skill.name": skillName,
+            //         "openclaw.session.key": sessionKey,
+            //       },
+            //     },
+            //     llmSpanContext,
+            //   );
+            //   skillSpan.setStatus({ code: SpanStatusCode.OK });
+            //   // End span immediately (instant span)
+            //   logger.debug?.(`[otel] Span ending: name=${skillSpanName}, session=${sessionKey}, endTime=${spanEndTime}`);
+            //   skillSpan.end(spanEndTime);
+            // }
           }
         }
       }
@@ -1232,6 +1245,7 @@ User input: `
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       totalTokens: 0,
+      usedSkills: [],
     };
     if (!sessionCtx?.agentSpan) {
       logger.debug?.(
@@ -1270,6 +1284,7 @@ User input: `
           totalTokens = 0,
           model,
           provider,
+          usedSkills = [],
         } = createLlmSpanFromMessage(
           msg,
           prevMsg,
@@ -1289,6 +1304,10 @@ User input: `
         }
         if (provider) {
           tokenUsage.provider = provider;
+        }
+        // Collect used skills
+        if (usedSkills.length > 0) {
+          tokenUsage.usedSkills.push(...usedSkills);
         }
         // if (Array.isArray(msg?.content)) {
         //   for (const item of msg.content) {

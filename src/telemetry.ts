@@ -166,6 +166,8 @@ export interface OtelCounters {
   sessionStuck: Counter;
   /** Run attempts */
   runAttempt: Counter;
+  /** Skill usage counter */
+  skillUsed: Counter;
 }
 
 export interface OtelHistograms {
@@ -534,6 +536,10 @@ export function initTelemetry(
       description: "Run attempts",
       unit: "1",
     }),
+    skillUsed: meter.createCounter("gen_ai.agent.skill_used", {
+      description: "Skill usage counter",
+      unit: "1",
+    });
   };
 
   const histograms: OtelHistograms = {
