@@ -4,27 +4,20 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### [1.0.4](https://dg.starstao.top/ads/openclaw-observability-plugin/compare/v1.0.3...v1.0.4) (2026-03-30)
 
-## [1.0.3] - 2026-03-30
-
-### Changed
-- Update documentation
-- Rename attributes and metrics for consistency
-- Fix syntax issues
-
-## [1.0.3] - 2026-03-27
+## [1.0.4] - 2026-03-30
 
 ### Added
 - Add skill counter metrics
 - Add `llm_input` & `llm_output` hooks for message input/output recording
-- Display available skills in prompt handling
+- Add `gen_ai.agent.used_skills` on agent span
 
 ### Changed
-- Change to not record skill span, record skill counter instead
 - Security check now runs on root span instead of agent span
 - Root span output now uses last assistant message only
 - Uniform all input/output format across spans
-- Fix `traceloop.entity.output` on agent span and LLM span
+- Rename metric names and metric attributes for consistency
 - Fix logging issues
+- Update documentation
 
 ## [1.0.1] - 2026-03-20
 

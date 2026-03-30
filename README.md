@@ -53,7 +53,7 @@ This plugin was developed to address these gaps and provide **comprehensive, pro
 | Dimension | Official Plugin | This Plugin | Notes |
 |-----------|:---------------:|:-----------:|-------|
 | **Traces** | ⭐⭐ | ⭐⭐⭐⭐⭐ | Official: Independent spans, no hierarchy <br> This: Complete parent-child hierarchy, LLM/Tool calls visible, input/output capture |
-| **Metrics** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: Basic Gateway metrics complete <br> This: 100% compatible + Agent/Tool/Security extra metrics |
+| **Metrics** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: Basic Gateway metrics complete <br> This: 100% compatible + Agent/Skill/Tool/Security extra metrics |
 | **Logs** | ⭐⭐⭐ | ⭐⭐⭐ | Same as official |
 | **Protocol Support** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Official: http/protobuf only <br> This: http/protobuf + gRPC dual protocol |
 | **Security Detection** | ☆ | ⭐⭐⭐⭐⭐ | Official: No security detection <br> This: Built-in sensitive file access, prompt injection, dangerous command detection exported as span events |
