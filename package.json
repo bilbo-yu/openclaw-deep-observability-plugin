@@ -1,6 +1,6 @@
 {
   "name": "openclaw-deep-observability-plugin",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "OpenTelemetry deep observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,7 @@
     "README.md",
     "LICENSE",
     "openclaw.plugin.json",
-     "docs/**"
+    "docs/**"
   ],
   "openclaw": {
     "extensions": [
@@ -33,7 +33,10 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ index.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release": "standard-version",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major"
   },
   "keywords": [
     "openclaw",
@@ -66,6 +69,7 @@
     "tslog": "^4.10.2"
   },
   "devDependencies": {
+    "standard-version": "^9.5.0",
     "typescript": "^5.7.0"
   }
 }
