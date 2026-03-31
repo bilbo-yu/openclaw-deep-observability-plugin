@@ -350,7 +350,7 @@ export function registerHooks(
         const messages = event?.historyMessages || [];
         const sessionCtx = sessionContextMap.get(sessionKey);
         const agentSpan = sessionCtx?.agentSpan;
-        
+        logger.debug?.(`[otel] llm_input event : systemPromt=${systemPrompt}`);
         // Set messageInput from prompt
         if (sessionCtx && prompt) {
           sessionCtx.messageInput = prompt;
@@ -413,13 +413,23 @@ export function registerHooks(
       // Never let telemetry errors break the main flow
     }
 
-    // Return skill tracking instructions to be prepended to the prompt
+    // Return tracking instructions to be append to system prompt
     return {
-      prependContext: `# Instruction:
-Upon completing your reasoning, you are required to identify and disclose the specific skills employed. Append this information to the end of your response using the specified format.
-# Format:
-- Skills Used: skill_name_1, skill_name_2
-# User Question: `
+      appendSystemContext: `
+\n
+## Core Instructions
+As the core agent of the OpenClaw system, you must adhere to the following logic when processing every user request:
+
+- **Self-Reflection and Analysis**: Before generating the final response, internally evaluate the specific skills required to complete the task.
+- **Skill Disclosure Requirement**: Upon completing your reasoning and response, you **must** identify and disclose the specific skills employed.
+- **Mandatory Format**: Append the list of skills to the end of your response, strictly following the format specified below:
+
+### Format:
+---
+
+*Skills Used: \`skill_name_1\`, \`skill_name_2\`*
+\n
+`
     };
   }
 
@@ -887,17 +897,30 @@ Upon completing your reasoning, you are required to identify and disclose the sp
   }
 
   /**
-   * 从内容中提取 "Skills Used: skill_name_1, skill_name_2" 格式的技能名称列表
+   * 从内容中提取技能名称列表，支持以下四种格式：
+   * 1. Skills Used: skill_1, skill_2
+   * 2. Skills Used: `skill_1`, `skill_2`
+   * 3. *Skills Used: skill_1, skill_2*
+   * 4. *Skills Used: `skill_1`, `skill_2`*
    * @param content - 消息内容（字符串或数组）
    * @returns 技能名称数组
    */
   function extractSkillsFromContent(content: any): string[] {
     const skills: string[] = [];
     const extractFromString = (text: string) => {
-      // Match "Skills Used: skill_name_1, skill_name_2" format (case insensitive)
-      const match = text.match(/Skills Used:\s*([^\n]+)/i);
+      // Match all four formats (case insensitive):
+      // 1. Skills Used: skill_1, skill_2
+      // 2. Skills Used: `skill_1`, `skill_2`
+      // 3. *Skills Used: skill_1, skill_2*
+      // 4. *Skills Used: `skill_1`, `skill_2`*
+      const match = text.match(/\*?Skills Used:\s*([^*\n]+)\*?/i);
       if (match && match[1]) {
-        const skillNames = match[1].split(',').map(s => s.trim()).filter(s => s.length > 0);
+        // Remove backticks and split by comma
+        const skillNames = match[1]
+          .replace(/`/g, '')  // Remove backticks
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s.length > 0);
         skills.push(...skillNames);
       }
     };
