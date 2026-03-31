@@ -350,7 +350,7 @@ export function registerHooks(
         const messages = event?.historyMessages || [];
         const sessionCtx = sessionContextMap.get(sessionKey);
         const agentSpan = sessionCtx?.agentSpan;
-        logger.debug?.(`[otel] llm_input event : systemPromt=${systemPrompt}`);
+        // logger.debug?.(`[otel] llm_input event : systemPromt=${systemPrompt}`);
         // Set messageInput from prompt
         if (sessionCtx && prompt) {
           sessionCtx.messageInput = prompt;
