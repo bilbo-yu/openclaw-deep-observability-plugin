@@ -2,12 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-### [2.0.1](https://dg.starstao.top/ads/openclaw-observability-plugin/compare/v2.0.0...v2.0.1) (2026-04-13)
+### [2.0.1](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/compare/v2.0.0...v2.0.1) (2026-04-13)
 
 
 ### Bug Fixes
 
-*  tool span missing sometimes issue. the reason is that sometimes there is no sessionkey in before_tool_call event ctx ([ab2eb6c](https://dg.starstao.top/ads/openclaw-observability-plugin/commit/ab2eb6cc9abb48bfc489b54b6a4cf0d6c0bdb84c))
+*  tool span missing sometimes issue. the reason is that sometimes there is no sessionkey in before_tool_call event ctx ([ab2eb6c](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/commit/ab2eb6cc9abb48bfc489b54b6a4cf0d6c0bdb84c))
 
 ## [2.0.0](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/compare/v1.0.4...v2.0.0) (2026-04-13)
 
