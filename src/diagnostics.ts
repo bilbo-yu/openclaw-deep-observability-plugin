@@ -570,7 +570,6 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
       rootSpan,
       rootContext,
       startTime: Date.now(),
-      pendingToolSpans: new Map(),
     });
     diagnosticsLogger.debug?.(`[otel] Span starting: name=openclaw.request, session=${sessionKey}`);
   } catch (error) {

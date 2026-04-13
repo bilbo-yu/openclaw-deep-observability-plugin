@@ -34,8 +34,9 @@ import type { OtelObservabilityConfig } from "./config.js";
 import {
   ContentInfo,
   sessionContextMap,
+  pendingToolSpansMap,
   type SessionTraceContext,
-  type ToolCallInfo,
+  type PendingToolSpan,
 } from "./session-context.js";
 import {
   checkToolSecurity,
@@ -61,7 +62,7 @@ class TokenUsage {
 let cleanupIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Start periodic cleanup of stale session contexts.
+ * Start periodic cleanup of stale session contexts and pending tool spans.
  * Should be called from service.start().
  */
 export function startAutoCleanupStaleSessions(logger: any): void {
@@ -69,6 +70,8 @@ export function startAutoCleanupStaleSessions(logger: any): void {
   cleanupIntervalHandle = setInterval(() => {
     const now = Date.now();
     const maxAge = 30 * 60 * 1000; // 30 minutes
+
+    // Clean up stale session contexts
     for (const [key, ctx] of sessionContextMap) {
       if (now - ctx.startTime > maxAge) {
         try {
@@ -86,6 +89,17 @@ export function startAutoCleanupStaleSessions(logger: any): void {
         sessionContextMap.delete(key);
         logger.debug?.(
           `[otel] Cleaned up stale trace context for session=${key}`,
+        );
+      }
+    }
+
+    // Clean up stale pending tool spans
+    for (const [toolCallId, pending] of pendingToolSpansMap) {
+      const pendingAge = now - pending.startTime;
+      if (pendingAge > maxAge) {
+        pendingToolSpansMap.delete(toolCallId);
+        logger.debug?.(
+          `[otel] Cleaned up stale pending tool span: toolCallId=${toolCallId}, toolName=${pending.toolName}`,
         );
       }
     }
@@ -405,7 +419,6 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           agentSpan,
           agentContext,
           startTime: Date.now(),
-          pendingToolSpans: new Map(),
           startMessagesLength: event?.messages?.length || 0,
         });
       }
@@ -541,7 +554,8 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           messages,
           sessionCtx,
           sessionKey,
-          agentId
+          agentId,
+          telemetry
         );
 
         // Set used_skills attribute on agent span
@@ -625,99 +639,26 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleToolResultPersist(event: any, ctx: any) {
     try {
-      const telemetry = getTelemetry();
-      if (!telemetry) return undefined;
-      const { histograms } = telemetry;
-
       logger.debug?.(
         `[otel] Tool result persist: ctx=${JSON.stringify(ctx)}}`
       );
-      const toolName = event?.toolName || "unknown";
       const toolCallId = event?.toolCallId || "";
       const isSynthetic = event?.isSynthetic === true;
-      const sessionKey = ctx?.sessionKey || "unknown";
+      const message = event?.message;
+      const endTime = message?.timestamp || Date.now();
 
-      // Get session context and pending tool span
-      const sessionCtx = sessionContextMap.get(sessionKey);
-      const pendingToolSpan = sessionCtx?.pendingToolSpans?.get(toolName);
-
-      if (pendingToolSpan) {
-        const { span, startTime, securityEvent } = pendingToolSpan;
-
-        // Add additional attributes
-        span.setAttribute("openclaw.tool.call_id", toolCallId);
-        span.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
-        span.setAttribute("gen_ai.tool.call.id", toolCallId);
-
-        // Inspect the message for result metadata
-        const message = event?.message;
-        if (message) {
-          const contentArray = message?.content;
-          if(contentArray){
-            const contentInfo = redactContent(contentArray);
-            // Record result_chars and result_parts
-            span.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
-            // Record tool output
-            if (captureContent) {
-              span.setAttribute("traceloop.entity.output", toString(contentInfo.content));
-            }
-          }
-        }
-
-        // Set status based on isError, details.status, or securityEvent (unified logic)
-        const isToolError = message?.is_error === true || message?.isError === true;
-        const isDetailsError = message?.details?.status === "error";
-        const hasError = isToolError || isDetailsError;
-
-        // Extract error message from details if available
-        let errorMessage = "Tool execution error";
-        if (isDetailsError && message?.details?.error) {
-          errorMessage = String(message.details.error).slice(0, 500);
-        }
-
-        if (hasError) {
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: errorMessage,
-          });
-        } else if (securityEvent &&
-          (securityEvent.severity === "critical" ||
-            securityEvent.severity === "high")) {
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: `Security Alert: ${securityEvent.detection} - ${securityEvent.description}`,
-          });
-        } else {
-          span.setStatus({ code: SpanStatusCode.OK });
-        }
-
-        // End span with correct timestamp
-        const endTime = message?.timestamp || Date.now();
-        let durationMs = endTime - startTime;
-        if (typeof message?.details?.durationMs === "number") {
-          durationMs = message.details.durationMs;
-        }
-        span.setAttribute("openclaw.tool.duration_ms", durationMs);
-
-        histograms.aiOpDurationHistogram.record(durationMs / 1000.0, {
-          "gen_ai.operation.name": "execute_tool",
-          "error.type": hasError ? "tool_error" : "",
-          "gen_ai.tool.name": toolName,
-        });
-
-        span.end(endTime);
-
-        // Remove from pendingToolSpans
-        if (sessionCtx) {
-          sessionCtx.pendingToolSpans.delete(toolName);
-        }
-
+      // Update pending tool span data with end time, output, and isSynthetic
+      const pending = pendingToolSpansMap.get(toolCallId);
+      if (pending) {
+        pending.endTime = endTime;
+        pending.output = message;
+        pending.isSynthetic = isSynthetic;
         logger.debug?.(
-          `[otel] Span ending: name=tool.${toolName}, session=${sessionKey}, durationMs=${durationMs}`
+          `[otel] Updated pending tool span: toolCallId=${toolCallId}, toolName=${pending.toolName}, endTime=${endTime}`
         );
       } else {
         logger.debug?.(
-          `[otel] No pending tool span found for tool=${toolName}, session=${sessionKey}`
+          `[otel] No pending tool span found for toolCallId=${toolCallId}`
         );
       }
     } catch {
@@ -732,80 +673,24 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleBeforeToolCall(event: any, ctx: any) {
     try {
-      const telemetry = getTelemetry();
-      if (!telemetry) return undefined;
-      const { tracer, counters } = telemetry;
-      const securityCounters = buildSecurityCounters(counters);
-
       logger.debug?.(
-        `[otel] before_tool_call event: ctx=${JSON.stringify(ctx)}`
+        `[otel] before_tool_call event: event=${JSON.stringify(event)} ctx=${JSON.stringify(ctx)}`
       );
 
       const toolName = event?.toolName || "unknown";
       const params = event?.params;
-      const sessionKey = ctx?.sessionKey || "unknown";
-      const agentId = ctx?.agentId || "unknown";
+      const toolCallId = ctx?.toolCallId || "";
       const startTime = Date.now();
 
-      // Get parent context — prefer agent turn span, fall back to root
-      const sessionCtx = sessionContextMap.get(sessionKey);
-      const parentContext = sessionCtx?.agentContext ||
-        sessionCtx?.rootContext ||
-        context.active();
-
-      // Create tool span as child of agent turn
-      const span = tracer.startSpan(
-        `tool.${toolName}`,
-        {
-          kind: SpanKind.INTERNAL,
-          attributes: {
-            "gen_ai.operation.name": "execute_tool",
-            "gen_ai.tool.name": toolName,
-          },
-        },
-        parentContext
-      );
-
-      // ═══ SECURITY DETECTION 1 & 3: File Access & Dangerous Commands ═══
-      logger.debug?.(
-        `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(params)}`
-      );
-      const securityEvent = checkToolSecurity(
+      // Store pending tool data in global map keyed by toolCallId
+      pendingToolSpansMap.set(toolCallId, {
+        startTime,
         toolName,
-        params || {},
-        span,
-        securityCounters,
-        sessionKey,
-        agentId
-      );
-      if (securityEvent) {
-        logger.warn?.(
-          `[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`
-        );
-      }
-      // Record tool input
-      if (params) {
-        const inputSize = JSON.stringify(params).length;
-        span.setAttribute("gen_ai.tool.call.arguments.chars", inputSize);
-        if (captureContent) {
-          if (params.content) {
-            params.content = "***";
-          }
-          span.setAttribute("traceloop.entity.input", redactText(JSON.stringify(params)));
-        }
-      }
-
-      // Store span in pendingToolSpans for later ending in tool_result_persist
-      if (sessionCtx) {
-        sessionCtx.pendingToolSpans.set(toolName, {
-          span,
-          startTime,
-          securityEvent,
-        });
-      }
+        input: params,
+      });
 
       logger.debug?.(
-        `[otel] Span starting: name=tool.${toolName}, session=${sessionKey}`
+        `[otel] Recorded pending tool call: toolName=${toolName}, toolCallId=${toolCallId}`
       );
     } catch {
       logger.warn?.(
@@ -899,6 +784,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     sessionKey: string,
     spanStartTime: number,
     spanEndTime: number,
+    telemetry: TelemetryRuntime,
   ): TokenUsage {
     const tokenUsage: TokenUsage = {
       inputTokens: 0,
@@ -909,8 +795,6 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       usedSkills: [],
     };
     try {
-      const telemetry = getTelemetry();
-      if (!telemetry) return tokenUsage;
       const { tracer } = telemetry;
 
       let inputText: ContentInfo | undefined;
@@ -1062,38 +946,55 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
   }
 
   /**
-   * Create a tool span from a toolResult message.
+   * Create a tool span from a toolResult message, using data collected
+   * by before_tool_call and tool_result_persist hooks.
+   *
+   * All span attributes are reproduced here to match the original behavior:
+   * - Input: gen_ai.tool.call.arguments.chars, traceloop.entity.input (with content="***" redaction + redactText)
+   * - Security: checkToolSecurity on input
+   * - Output: gen_ai.tool.call.result.chars, traceloop.entity.output (with redactContent)
+   * - Status: isError / details.status / securityEvent
+   * - Duration: openclaw.tool.duration_ms, histogram record
    *
    * @param msg - The toolResult message
    * @param parentContext - Parent context for the span
    * @param sessionKey - Session key for logging
-   * @param toolCallMap - Map of toolCallId to toolCall info
    * @param agentId - Agent ID for security logging
-   * @param spanStartTime - The start time of the span
-   * @param spanEndTime - The end time of the span
+   * @param msgStartTime - Fallback start time from message timestamp
+   * @param msgEndTime - Fallback end time from next message timestamp
    */
   function createToolSpanFromMessage(
     msg: any,
     parentContext: Context,
     sessionKey: string,
-    toolCallMap: Map<string, ToolCallInfo>,
     agentId: string,
-    spanStartTime: number,
-    spanEndTime: number,
+    msgStartTime: number,
+    msgEndTime: number,
+    telemetry: TelemetryRuntime,
   ): void {
+    const toolCallId = msg.toolCallId;
     try {
-      const telemetry = getTelemetry();
-      if (!telemetry) return;
       const { tracer, counters, histograms } = telemetry;
       const securityCounters = buildSecurityCounters(counters);
 
-      const toolCallId = msg.toolCallId;
+      
       const toolName = msg.toolName || "unknown";
-      const isError = msg.isError === true;
 
-      // Get tool call info from map
-      const toolCallInfo = toolCallMap.get(toolCallId);
-      const toolArguments = toolCallInfo?.arguments || {};
+      // Get pending data from hooks (startTime, input, endTime, output, isSynthetic)
+      const pendingData = pendingToolSpansMap.get(toolCallId);
+
+      // Use hook-collected timing if available, fall back to message timing
+      const spanStartTime = pendingData?.startTime || msgStartTime;
+      const spanEndTime = pendingData?.endTime || msgEndTime;
+
+      // Get input params from hooks (before_tool_call)
+      const inputParams = pendingData?.input;
+      // Get output message from hooks (tool_result_persist)
+      const outputMessage = pendingData?.output || msg;
+      const isSynthetic = pendingData?.isSynthetic;
+
+      // Determine isError from output message
+      const isError = outputMessage?.is_error === true || outputMessage?.isError === true;
 
       // Create tool span
       const spanName = `tool.${toolName}`;
@@ -1104,28 +1005,41 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           kind: SpanKind.INTERNAL,
           startTime: spanStartTime,
           attributes: {
+            "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": toolName,
-            "openclaw.session.key": sessionKey,
-            "openclaw.tool.call_id": toolCallId || "",
           },
         },
         parentContext,
       );
-      if (captureContent && toolArguments) {
-        // Set tool input from arguments
-        toolSpan.setAttribute(
-          "traceloop.entity.output",
-          JSON.stringify(toolArguments),
-        );
+
+      // Set tool call IDs
+      toolSpan.setAttribute("openclaw.tool.call_id", toolCallId || "");
+      toolSpan.setAttribute("gen_ai.tool.call.id", toolCallId || "");
+      toolSpan.setAttribute("openclaw.session.key", sessionKey);
+      if (isSynthetic !== undefined) {
+        toolSpan.setAttribute("openclaw.tool.is_synthetic", isSynthetic);
+      }
+
+      // ── Input attributes (from before_tool_call) ──
+      if (inputParams) {
+        const inputSize = JSON.stringify(inputParams).length;
+        toolSpan.setAttribute("gen_ai.tool.call.arguments.chars", inputSize);
+        if (captureContent) {
+          const paramsClone = { ...inputParams };
+          if (paramsClone.content) {
+            paramsClone.content = "***";
+          }
+          toolSpan.setAttribute("traceloop.entity.input", redactText(JSON.stringify(paramsClone)));
+        }
       }
 
       // ═══ SECURITY DETECTION: File Access & Dangerous Commands ═══
       logger.debug?.(
-        `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(toolArguments)}`,
+        `[otel] Checking tool security for tool=${toolName}, session=${sessionKey}, input=${JSON.stringify(inputParams || {})}`,
       );
       const securityEvent = checkToolSecurity(
         toolName,
-        toolArguments,
+        inputParams || {},
         toolSpan,
         securityCounters,
         sessionKey,
@@ -1142,21 +1056,31 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         );
       }
 
-      // Set tool output from content
-      const contentArray = msg.content;
-      if (contentArray){
-        const contentInfo = redactContent(contentArray);
-        if (captureContent) {
-          toolSpan.setAttribute("traceloop.entity.output", toString(contentInfo.content));
+      if (outputMessage) {
+        const contentArray = outputMessage.content;
+        if (contentArray) {
+          const contentInfo = redactContent(contentArray);
+          toolSpan.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
+          if (captureContent) {
+            toolSpan.setAttribute("traceloop.entity.output", toString(contentInfo.content));
+          }
         }
-        toolSpan.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
       }
 
-      // Set status based on isError or securityEvent (unified logic)
-      if (isError) {
+      // ── Status (unified logic from original handleToolResultPersist) ──
+      const isDetailsError = outputMessage?.details?.status === "error";
+      const hasError = isError || isDetailsError;
+
+      // Extract error message from details if available
+      let errorMessage = "Tool execution error";
+      if (isDetailsError && outputMessage?.details?.error) {
+        errorMessage = String(outputMessage.details.error).slice(0, 500);
+      }
+
+      if (hasError) {
         toolSpan.setStatus({
           code: SpanStatusCode.ERROR,
-          message: "Tool execution error",
+          message: errorMessage,
         });
       } else if (
         securityEvent &&
@@ -1171,14 +1095,17 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         toolSpan.setStatus({ code: SpanStatusCode.OK });
       }
 
-      // Calculate and record duration
-      const durationMs = spanEndTime - spanStartTime;
+      // ── Duration ──
+      let durationMs = spanEndTime - spanStartTime;
+      if (typeof outputMessage?.details?.durationMs === "number") {
+        durationMs = outputMessage.details.durationMs;
+      }
       toolSpan.setAttribute("openclaw.tool.duration_ms", durationMs);
       histograms.aiOpDurationHistogram.record(durationMs / 1000.0, {
-          "gen_ai.operation.name": "execute_tool",
-          "error.type": isError ? "tool_error" : "",
-          "gen_ai.tool.name": toolName,
-        });
+        "gen_ai.operation.name": "execute_tool",
+        "error.type": hasError ? "tool_error" : "",
+        "gen_ai.tool.name": toolName,
+      });
 
       // End span with correct end time
       logger.debug?.(`[otel] Span ending: name=${spanName}, session=${sessionKey}, endTime=${spanEndTime}, durationMs=${durationMs}`);
@@ -1187,6 +1114,9 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       logger.debug?.(
         `[otel] Error creating tool span from message: msg=${msg}, error=${spanError}`,
       );
+    } finally {
+      // Clean up pending data
+      pendingToolSpansMap.delete(toolCallId);
     }
   }
 
@@ -1209,6 +1139,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     sessionCtx: SessionTraceContext | undefined,
     sessionKey: string,
     agentId: string,
+    telemetry: TelemetryRuntime,
   ): TokenUsage {
     const tokenUsage: TokenUsage = {
       inputTokens: 0,
@@ -1231,9 +1162,6 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     // Use agentContext as parent context for all spans
     const parentContext =
       sessionCtx.agentContext || sessionCtx.rootContext || context.active();
-
-    // Build a map of toolCallId -> toolCall info (name, arguments, assistantMsgTimestamp)
-    // const toolCallMap = new Map<string, { name: string; arguments: any; assistantTimestamp: number }>();
 
     // Iterate through messages and create spans
     for (let i = startIdx; i < messages.length; i++) {
@@ -1264,6 +1192,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           sessionKey,
           spanStartTime,
           spanEndTime,
+          telemetry,
         );
         tokenUsage.inputTokens += inputTokens;
         tokenUsage.outputTokens += outputTokens;
@@ -1280,27 +1209,34 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         if (usedSkills.length > 0) {
           tokenUsage.usedSkills.push(...usedSkills);
         }
-        // if (Array.isArray(msg?.content)) {
-        //   for (const item of msg.content) {
-        //     if (item?.type === "toolCall" && item?.id) {
-        //       sessionCtx.toolCalls.set(item.id, {
-        //         name: item.name || "unknown",
-        //         arguments: item.arguments || {},
-        //       });
-        //     }
-        //   }
-        // }
+        // Extract toolCall arguments from assistant message as fallback input
+        // for cases where before_tool_call event was missing
+        if (Array.isArray(msg?.content)) {
+          for (const item of msg.content) {
+            if (item?.type === "toolCall" && item?.id) {
+              const callId = item.id;
+              const existing = pendingToolSpansMap.get(callId);
+              if (!existing) {
+                // No before_tool_call event — create entry with fallback data
+                pendingToolSpansMap.set(callId, {
+                  startTime: msg.timestamp || agentStartTime,
+                  toolName: item.name || "unknown",
+                  input: item.arguments || undefined,
+                });
+              }
+            }
+          }
+        }
       } else if (msg?.role === "toolResult") {
-        // 这里计算的tool span的耗时不如通过tool相关hook算的准，所以暂时用hook来创建tool span
-        // createToolSpanFromMessage(
-        //   msg,
-        //   parentContext,
-        //   sessionKey,
-        //   sessionCtx.toolCalls,
-        //   agentId,
-        //   spanStartTime,
-        //   spanEndTime,
-        // );
+        createToolSpanFromMessage(
+          msg,
+          parentContext,
+          sessionKey,
+          agentId,
+          spanStartTime,
+          spanEndTime,
+          telemetry,
+        );
       }
     }
     return tokenUsage;

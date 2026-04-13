@@ -5,13 +5,15 @@
  */
 
 import type { Span, Context } from "@opentelemetry/api";
-import type { SecurityEvent } from "./security.js";
 
-/** Pending tool span with start time for duration calculation */
+/** Pending tool span data collected by hooks, consumed by createToolSpanFromMessage */
 export interface PendingToolSpan {
-  span: Span;
   startTime: number;
-  securityEvent?: SecurityEvent | null;
+  endTime?: number;
+  toolName: string;
+  input?: any;
+  output?: any;
+  isSynthetic?: boolean;
 }
 
 export interface ToolCallInfo {
@@ -41,7 +43,6 @@ export interface SessionTraceContext {
   messageInput?: string;
   messageOutput?: string;
   skills?: string[];
-  pendingToolSpans: Map<string, PendingToolSpan>;
   // toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
   startMessagesLength?: number;
@@ -49,3 +50,6 @@ export interface SessionTraceContext {
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
 export const sessionContextMap = new Map<string, SessionTraceContext>();
+
+/** Global map of toolCallId → pending tool span data, populated by before_tool_call / tool_result_persist hooks. */
+export const pendingToolSpansMap = new Map<string, PendingToolSpan>();
