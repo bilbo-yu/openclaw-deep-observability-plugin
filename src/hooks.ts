@@ -55,262 +55,18 @@ class TokenUsage {
   usedSkills: string[] = [];
 }
 
-/** Active trace context for a session — allows connecting spans into one trace. */
-// interface SessionTraceContext {
-//   rootSpan: Span;
-//   rootContext: Context;
-//   agentSpan?: Span;
-//   agentContext?: Context;
-//   startTime: number;
-// }
+// ═══════════════════════════════════════════════════════════════════
+// Stale session cleanup — managed by start/stopAutoCleanupStaleSessions
+// ═══════════════════════════════════════════════════════════════════
+let cleanupIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
-// /** Map of sessionKey → active trace context. Cleaned up on agent_end. */
-// const sessionContextMap = new Map<string, SessionTraceContext>();
-
-// function extractAndRedactTextContent(contentObject: any): ContentInfo {
-//   if (contentObject && Array.isArray(contentObject)) {
-//     const textParts = contentObject
-//       .filter((c: any) => c.type === "text")
-//       .map((c: any) => String(c.text || ""));
-//     const totalChars = textParts.reduce(
-//       (sum: number, t: string) => sum + t.length,
-//       0,
-//     );
-//     // Record tool output
-//     const output = textParts.join("\n");
-//     return {
-//       totalChars: totalChars,
-//       totalParts: contentObject.length,
-//       content: redactText(output),
-//     };
-//   } else if (typeof contentObject === "string") {
-//     return {
-//       totalChars: contentObject.length,
-//       totalParts: 1,
-//       content: redactText(contentObject),
-//     };
-//   } else {
-//     const str = JSON.stringify(contentObject);
-//     return {
-//       totalChars: str.length,
-//       totalParts: 1,
-//       content: redactText(str),
-//     };
-//   }
-// }
 /**
- * Register all plugin hooks on the OpenClaw plugin API.
+ * Start periodic cleanup of stale session contexts.
+ * Should be called from service.start().
  */
-export function registerHooks(
-  api: any,
-  telemetry: TelemetryRuntime,
-  config: OtelObservabilityConfig,
-): void {
-  const { tracer, counters, histograms } = telemetry;
-  const captureContent = config.captureContent || false;
-  const logger = api.logger;
-
-  // Build security counters object for detection module
-  const securityCounters: SecurityCounters = {
-    securityEvents: counters.securityEvents,
-    sensitiveFileAccess: counters.sensitiveFileAccess,
-    promptInjection: counters.promptInjection,
-    dangerousCommand: counters.dangerousCommand,
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // TYPED HOOKS — registered via api.on() into registry.typedHooks
-  // ═══════════════════════════════════════════════════════════════════
-
-  // ── message_received ─────────────────────────────────────────────
-  // Creates the ROOT span for the entire request lifecycle.
-  // All subsequent spans (agent, tools) become children of this span.
-
-
-  // api.on(
-  //   "message_received",
-  //   async (event: any, ctx: any) => {
-  //     try {
-  //       const channel = event?.channel || "unknown";
-  //       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-  //       const from = event?.from || event?.senderId || "unknown";
-  //       const messageText = event?.text || event?.message || "";
-
-  //       // Create root span for this request
-  //       const rootSpan = tracer.startSpan("openclaw.request", {
-  //         kind: SpanKind.SERVER,
-  //         attributes: {
-  //           "openclaw.message.channel": channel,
-  //           "openclaw.session.key": sessionKey,
-  //           "openclaw.message.direction": "inbound",
-  //           "openclaw.message.from": from,
-  //         },
-  //       });
-
-  //       // ═══ SECURITY DETECTION 2: Prompt Injection ═══════════════
-  //       if (messageText && typeof messageText === "string" && messageText.length > 0) {
-  //         const securityEvent = checkMessageSecurity(
-  //           messageText,
-  //           rootSpan,
-  //           securityCounters,
-  //           sessionKey
-  //         );
-  //         if (securityEvent) {
-  //           logger.warn?.(`[otel] SECURITY: ${securityEvent.detection} - ${securityEvent.description}`);
-  //         }
-  //       }
-
-  //       // Store the context so child spans can reference it
-  //       const rootContext = trace.setSpan(context.active(), rootSpan);
-
-  //       sessionContextMap.set(sessionKey, {
-  //         rootSpan,
-  //         rootContext,
-  //         startTime: Date.now(),
-  //       });
-
-  //       // Record message count metric
-  //       counters.messagesReceived.add(1, {
-  //         "openclaw.message.channel": channel,
-  //       });
-
-  //       logger.debug?.(`[otel] Root span started for session=${sessionKey}`);
-  //     } catch {
-  //       // Never let telemetry errors break the main flow
-  //     }
-  //   },
-  //   { priority: 100 } // High priority — run first to establish context
-  // );
-
-  // logger.info("[otel] Registered message_received hook (via api.on)");
-
-  // ── before_agent_start ───────────────────────────────────────────
-  // Creates an "agent turn" child span under the root request span.
-
-  api.on(
-    "before_agent_start",
-    (event: any, ctx: any) => {
-      return handleBeforeAgentStart(event, ctx);
-    },
-    { priority: 90 },
-  );
-  logger.info("[otel] Registered before_agent_start hook (via api.on)");
-    // ── agent_end ────────────────────────────────────────────────────
-  // Ends the agent turn span AND the root request span.
-  // Event shape from OpenClaw:
-  //   event: { messages, success, error?, durationMs }
-  //   ctx:   { agentId, sessionKey, workspaceDir, messageProvider? }
-  // Token usage is embedded in the last assistant message's .usage field.
-
-  api.on(
-    "agent_end",
-    async (event: any, ctx: any) => {
-      handleAgentEnd(event, ctx);
-    },
-    { priority: -100 },
-  );
-
-  logger.info("[otel] Registered agent_end hook (via api.on)");
-  
-  api.on(
-    "before_tool_call",
-    (event: any, ctx: any) => {
-      return handleBeforeToolCall(event, ctx);
-    },
-    { priority: -100 },
-  );
-  logger.info("[otel] Registered before_tool_call hook (via api.on)");
-
-  // ── tool_result_persist ──────────────────────────────────────────
-  // Ends the pending tool span created in before_tool_call.
-  // SYNCHRONOUS — must not return a Promise.
-
-  api.on(
-    "tool_result_persist",
-    (event: any, ctx: any) => {
-      return handleToolResultPersist(event, ctx);
-    },
-    { priority: -100 },
-  );
-
-  logger.info("[otel] Registered tool_result_persist hook (via api.on)");
-
-  // ── llm_input ────────────────────────────────────────────────────
-  // Creates an LLM span for tracking chat operations.
-
-  api.on(
-    "llm_input",
-    (event: any, ctx: any) => {
-      return handleLLMInput(event, ctx);
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_input hook (via api.on)");
-
-  // ── llm_output ───────────────────────────────────────────────────
-  // Ends the pending LLM span created in llm_input.
-  // Sets messageOutput for use in message.processed handler.
-
-  api.on(
-    "llm_output",
-    (event: any, ctx: any) => {
-      return handleLLMOutput(event, ctx);
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered llm_output hook (via api.on)");
-
-  // ── before_prompt_build ─────────────────────────────────────────
-  // Injects skill tracking instructions into the prompt context.
-
-  api.on(
-    "before_prompt_build",
-    (event: any, ctx: any) => {
-      return handleBeforePromptBuild(event, ctx);
-    },
-    { priority: -100 }
-  );
-  logger.info("[otel] Registered before_prompt_build hook (via api.on)");
-
-
-
-  // ═══════════════════════════════════════════════════════════════════
-  // EVENT-STREAM HOOKS — registered via api.registerHook()
-  // ═══════════════════════════════════════════════════════════════════
-
-  // ── Command event hooks ──────────────────────────────────────────
-
-  api.registerHook(
-    ["command:new", "command:reset", "command:stop"],
-    async (event: any) => {
-      handleCommandEvents(event);
-    },
-    {
-      name: "otel-command-events",
-      description: "Records session command spans via OpenTelemetry",
-    },
-  );
-
-  logger.info("[otel] Registered command event hooks (via api.registerHook)");
-
-  // ── Gateway startup hook ─────────────────────────────────────────
-
-  api.registerHook(
-    "gateway:startup",
-    async (event: any) => {
-      handleGatewayStartup();
-    },
-    {
-      name: "otel-gateway-startup",
-      description: "Records gateway startup event via OpenTelemetry",
-    },
-  );
-
-  logger.info("[otel] Registered gateway:startup hook (via api.registerHook)");
-
-  // ── Periodic cleanup ─────────────────────────────────────────────
-  // Safety net: clean up stale session contexts (e.g., if agent_end never fires)
-  setInterval(() => {
+export function startAutoCleanupStaleSessions(logger: any): void {
+  if (cleanupIntervalHandle) return; // already started
+  cleanupIntervalHandle = setInterval(() => {
     const now = Date.now();
     const maxAge = 30 * 60 * 1000; // 30 minutes
     for (const [key, ctx] of sessionContextMap) {
@@ -334,14 +90,168 @@ export function registerHooks(
       }
     }
   }, 60_000);
+  logger.info("[otel] Stale session cleanup interval started");
+}
 
+/**
+ * Stop periodic cleanup of stale session contexts.
+ * Should be called from service.stop().
+ */
+export function stopAutoCleanupStaleSessions(): void {
+  if (cleanupIntervalHandle) {
+    clearInterval(cleanupIntervalHandle);
+    cleanupIntervalHandle = null;
+  }
+}
 
+/**
+ * Register all plugin hooks on the OpenClaw plugin API.
+ * Hooks are registered at plugin register time, but telemetry is obtained
+ * lazily via getTelemetry() so that it's only accessed after service.start().
+ */
+export function registerHooks(
+  api: any,
+  getTelemetry: () => TelemetryRuntime | null,
+  config: OtelObservabilityConfig,
+): void {
+  const captureContent = config.captureContent || false;
+  const logger = api.logger;
+
+  // Helper to build security counters from telemetry counters
+  function buildSecurityCounters(counters: TelemetryRuntime["counters"]): SecurityCounters {
+    return {
+      securityEvents: counters.securityEvents,
+      sensitiveFileAccess: counters.sensitiveFileAccess,
+      promptInjection: counters.promptInjection,
+      dangerousCommand: counters.dangerousCommand,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // TYPED HOOKS — registered via api.on() into registry.typedHooks
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── before_agent_start ───────────────────────────────────────────
+  // Creates an "agent turn" child span under the root request span.
+
+  api.on(
+    "before_agent_start",
+    (event: any, ctx: any) => {
+      return handleBeforeAgentStart(event, ctx);
+    },
+    { priority: 90 },
+  );
+  // logger.info("[otel] Registered before_agent_start hook (via api.on)");
+  // ── agent_end ────────────────────────────────────────────────────
+  // Ends the agent turn span AND the root request span.
+  // Event shape from OpenClaw:
+  //   event: { messages, success, error?, durationMs }
+  //   ctx:   { agentId, sessionKey, workspaceDir, messageProvider? }
+  // Token usage is embedded in the last assistant message's .usage field.
+
+  api.on(
+    "agent_end",
+    async (event: any, ctx: any) => {
+      handleAgentEnd(event, ctx);
+    },
+    { priority: -100 },
+  );
+  // logger.info("[otel] Registered agent_end hook (via api.on)");
+
+  api.on(
+    "before_tool_call",
+    (event: any, ctx: any) => {
+      return handleBeforeToolCall(event, ctx);
+    },
+    { priority: -100 },
+  );
+  // logger.info("[otel] Registered before_tool_call hook (via api.on)");
+
+  // ── tool_result_persist ──────────────────────────────────────────
+  // Ends the pending tool span created in before_tool_call.
+  // SYNCHRONOUS — must not return a Promise.
+
+  api.on(
+    "tool_result_persist",
+    (event: any, ctx: any) => {
+      return handleToolResultPersist(event, ctx);
+    },
+    { priority: -100 },
+  );
+  // logger.info("[otel] Registered tool_result_persist hook (via api.on)");
+
+  // ── llm_input ────────────────────────────────────────────────────
+  // Creates an LLM span for tracking chat operations.
+
+  api.on(
+    "llm_input",
+    (event: any, ctx: any) => {
+      return handleLLMInput(event, ctx);
+    },
+    { priority: -100 }
+  );
+  // logger.info("[otel] Registered llm_input hook (via api.on)");
+
+  // ── llm_output ───────────────────────────────────────────────────
+  // Ends the pending LLM span created in llm_input.
+  // Sets messageOutput for use in message.processed handler.
+
+  api.on(
+    "llm_output",
+    (event: any, ctx: any) => {
+      return handleLLMOutput(event, ctx);
+    },
+    { priority: -100 }
+  );
+  // logger.info("[otel] Registered llm_output hook (via api.on)");
+
+  // ── before_prompt_build ─────────────────────────────────────────
+  // Injects skill tracking instructions into the prompt context.
+
+  api.on(
+    "before_prompt_build",
+    (event: any, ctx: any) => {
+      return handleBeforePromptBuild(event, ctx);
+    },
+    { priority: -100 }
+  );
+  // logger.info("[otel] Registered before_prompt_build hook (via api.on)");
+
+  // ═══════════════════════════════════════════════════════════════════
+  // EVENT-STREAM HOOKS — registered via api.registerHook()
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Command event hooks ──────────────────────────────────────────
+  api.registerHook(
+    ["command:new", "command:reset", "command:stop"],
+    async (event: any) => {
+      handleCommandEvents(event);
+    },
+    {
+      name: "otel-command-events",
+      description: "Records session command spans via OpenTelemetry",
+    },
+  );
+  // logger.info("[otel] Registered command event hooks (via api.registerHook)");
+
+  // ── Gateway startup hook ─────────────────────────────────────────
+  api.registerHook(
+    "gateway:startup",
+    async (event: any) => {
+      handleGatewayStartup();
+    },
+    {
+      name: "otel-gateway-startup",
+      description: "Records gateway startup event via OpenTelemetry",
+    },
+  );
+  // logger.info("[otel] Registered gateway:startup hook (via api.registerHook)");
 
   // ════════════════════════════════════════════════════════════════════════════
   // Hook Handlers
   // ════════════════════════════════════════════════════════════════════════════
 
-  function handleLLMInput(event: any, ctx: any) { 
+  function handleLLMInput(event: any, ctx: any) {
     try {
         logger.debug?.(`[otel] llm_input event :  ctx=${JSON.stringify(ctx)}`);
         const sessionKey = ctx?.sessionKey || "unknown";
@@ -350,12 +260,11 @@ export function registerHooks(
         const messages = event?.historyMessages || [];
         const sessionCtx = sessionContextMap.get(sessionKey);
         const agentSpan = sessionCtx?.agentSpan;
-        // logger.debug?.(`[otel] llm_input event : systemPromt=${systemPrompt}`);
         // Set messageInput from prompt
         if (sessionCtx && prompt) {
           sessionCtx.messageInput = prompt;
         }
-        
+
         // Extract skills from systemPrompt and save to sessionCtx
         if (sessionCtx && systemPrompt) {
           const skills = extractSkillsFromSystemPrompt(systemPrompt);
@@ -364,15 +273,15 @@ export function registerHooks(
             logger.debug?.(`[otel] Extracted skills from systemPrompt: ${JSON.stringify(skills)}`);
           }
         }
-        
+
         if (agentSpan) {
           const { messageList: promptList, totalChars } = buildMessageListForSpan(messages, systemPrompt, prompt);
-          
+
           // 设置统计属性（始终设置）
           agentSpan.setAttribute("gen_ai.system_instructions.chars", systemPrompt.length);
           agentSpan.setAttribute("gen_ai.input.messages.chars", totalChars);
           agentSpan.setAttribute("gen_ai.input.messages.size", promptList.length);
-          
+
           // 只有 captureContent 为 true 时才设置详细内容
           if (captureContent) {
             agentSpan.setAttribute("traceloop.entity.input", JSON.stringify(promptList));
@@ -435,6 +344,14 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleBeforeAgentStart(event: any, ctx: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) {
+        logger.error?.(
+          "[otel] Telemetry not initialized. Skipping before_agent_start hook."
+        );
+        return undefined;
+      }
+      const { tracer } = telemetry;
       logger.debug?.(
         `[otel] before_agent_start event : ${JSON.stringify(ctx)}`
       );
@@ -463,12 +380,12 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           },
           parentContext
         );
-        
+
         logger.debug?.(
           `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
         );
       }
-      
+
       const agentContext = trace.setSpan(parentContext, agentSpan);
 
       // Store agent span context for tool spans
@@ -505,6 +422,9 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleGatewayStartup() {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) return;
+      const { tracer } = telemetry;
       const spanName = "openclaw.gateway.startup";
       logger.debug?.(`[otel] Span starting: name=${spanName}`);
       const span = tracer.startSpan(spanName, {
@@ -526,6 +446,9 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleCommandEvents(event: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) return;
+      const { tracer, counters } = telemetry;
       const action = event?.action || "unknown";
       const sessionKey = event?.sessionKey || "unknown";
       const spanName = `openclaw.command.${action}`;
@@ -566,9 +489,19 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleAgentEnd(event: any, ctx: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) {
+        logger.error?.(
+          "[otel] Telemetry not initialized. Skipping before_agent_start hook."
+        );
+        return undefined;
+      }
       logger.debug?.(
         `[otel] agent_end event: ctx: ${JSON.stringify(ctx)}`
       );
+      const { tracer, counters, histograms } = telemetry;
+      const securityCounters = buildSecurityCounters(counters);
+
       const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
       const agentId = event?.agentId || ctx?.agentId || "unknown";
       const durationMs = event?.durationMs;
@@ -580,12 +513,10 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
       // End the agent turn span
       if (agentSpan) {
-        // const firstMsg = messages[sessionCtx.startMessagesLength || 0] || {};
         const lastMsg = messages[messages.length - 1] || {};
-        // const input = firstMsg.role === "user" ? firstMsg.content : {};
         const output = lastMsg.role === "assistant" ? lastMsg.content : {};
         sessionCtx.messageOutput = toString(redactContent(output).content);
-        
+
         const startOutputMsgOffset = (sessionCtx.startMessagesLength||0) + 1
         if (messages.length > startOutputMsgOffset){
           const { messageList, totalChars } = buildMessageListForSpan(messages.slice(startOutputMsgOffset))
@@ -612,14 +543,14 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           sessionKey,
           agentId
         );
-        
+
         // Set used_skills attribute on agent span
         if (usedSkills.length > 0) {
           // Deduplicate usedSkills
           const uniqueSkills = [...new Set(usedSkills)];
           agentSpan.setAttribute("gen_ai.agent.used_skills", uniqueSkills.join(","));
           logger.debug?.(`[otel] agent_end used_skills: ${uniqueSkills.join(",")}`);
-          
+
           // Increment skill usage counter for each skill
           for (const skill of uniqueSkills) {
             counters.skillUsed.add(1, {
@@ -694,6 +625,10 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleToolResultPersist(event: any, ctx: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) return undefined;
+      const { histograms } = telemetry;
+
       logger.debug?.(
         `[otel] Tool result persist: ctx=${JSON.stringify(ctx)}}`
       );
@@ -797,6 +732,11 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
   function handleBeforeToolCall(event: any, ctx: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) return undefined;
+      const { tracer, counters } = telemetry;
+      const securityCounters = buildSecurityCounters(counters);
+
       logger.debug?.(
         `[otel] before_tool_call event: ctx=${JSON.stringify(ctx)}`
       );
@@ -878,10 +818,10 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
   }
 
 
-// ════════════════════════════════════════════════════════════════════════════
-// Utility Functions
-// ════════════════════════════════════════════════════════════════════════════
-  
+  // ════════════════════════════════════════════════════════════════════════════
+  // Utility Functions
+  // ════════════════════════════════════════════════════════════════════════════
+
   /**
    * 从 systemPrompt 中提取所有 skills 名字列表
    * @param systemPrompt - 系统提示内容
@@ -969,7 +909,10 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       usedSkills: [],
     };
     try {
-      // LLM input
+      const telemetry = getTelemetry();
+      if (!telemetry) return tokenUsage;
+      const { tracer } = telemetry;
+
       let inputText: ContentInfo | undefined;
       if (prevMsg?.role === "user") {
         inputText = redactContent(prevMsg?.content || []);
@@ -1005,7 +948,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           llmSpan.setAttribute("traceloop.entity.input", toString(inputText.content));
         }
       }
-      
+
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
       if (contentArray) {
@@ -1015,7 +958,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           llmSpan.setAttribute("traceloop.entity.output", toString(outputText.content));
         }
       }
-      
+
 
       // Set gen_ai.usage.* from message usage
       const msgUsage = msg.usage;
@@ -1061,7 +1004,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       } else {
         llmSpan.setStatus({ code: SpanStatusCode.OK });
       }
-      
+
       
 
       // ═══════════════════════════════════════════════════════════════
@@ -1071,10 +1014,10 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         const contentSkills = extractSkillsFromContent(contentArray);
         if (contentSkills.length > 0) {
           // Filter skills that exist in sessionCtx.skills
-          const matchedSkills = contentSkills.filter(skill => 
+          const matchedSkills = contentSkills.filter(skill =>
             sessionCtx.skills!.includes(skill)
           );
-          
+
           if (matchedSkills.length > 0) {
             logger.debug?.(`[otel] Creating skill spans for matched skills: ${JSON.stringify(matchedSkills)}, session=${sessionKey}`);
             
@@ -1139,6 +1082,11 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     spanEndTime: number,
   ): void {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) return;
+      const { tracer, counters, histograms } = telemetry;
+      const securityCounters = buildSecurityCounters(counters);
+
       const toolCallId = msg.toolCallId;
       const toolName = msg.toolName || "unknown";
       const isError = msg.isError === true;
@@ -1384,7 +1332,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         content: redactText(content),
       };
     }
-    
+
     if (Array.isArray(content)) {
       let totalChars = 0;
       const redactedArray = content.map((item) => {
@@ -1403,7 +1351,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         content: redactedArray,
       };
     }
-    
+
     const str = JSON.stringify(content);
     return {
       totalChars: str.length,
@@ -1426,7 +1374,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
   ): { messageList: any[]; totalChars: number } {
     const messageList: any[] = [];
     let totalChars = 0;
-    
+
     // 1. 添加 system prompt
     if (systemPrompt) {
       messageList.push({
@@ -1435,24 +1383,24 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       });
       totalChars += systemPrompt.length;
     }
-    
+
     // 2. 添加历史消息
     for (const msg of messages) {
       if (msg?.role && msg?.content) {
         const contentInfo = redactContent(msg.content);
         totalChars += contentInfo.totalChars;
-        
+
         const filteredMsg: any = {};
         if (msg.role) filteredMsg.role = msg.role;
         if (msg.content) filteredMsg.content = contentInfo.content;
         if (msg.stopReason) filteredMsg.stopReason = msg.stopReason;
         if (msg.toolCallId) filteredMsg.toolCallId = msg.toolCallId;
         if (msg.toolName) filteredMsg.toolName = msg.toolName;
-        
+
         messageList.push(filteredMsg);
       }
     }
-    
+
     // 3. 添加当前用户输入
     if (prompt) {
       messageList.push({
@@ -1461,7 +1409,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       });
       totalChars += prompt.length;
     }
-    
+
     return { messageList, totalChars };
   }
 }

@@ -59,16 +59,22 @@ type RegisterLogTransport = (transport: LogTransport) => () => void;
 let registerLogTransport: RegisterLogTransport | null = null;
 let sdkLoadAttempted = false;
 
-async function loadSdk(): Promise<void> {
+async function loadSdk(logger: any): Promise<void> {
   if (sdkLoadAttempted) return;
   sdkLoadAttempted = true;
   try {
     // Dynamic import to avoid build issues if SDK not available
     // @ts-ignore - openclaw/plugin-sdk types not available at build time
-    const sdk = (await import("openclaw/plugin-sdk")) as any;
+    const sdk = (await import("openclaw/plugin-sdk/diagnostics-otel")) as any;
+    
+    // 打印 SDK 导出的所有符号
+    const exports = Object.keys(sdk);
+    logger.info(`[otel] openclaw/plugin-sdk loaded, exports: ${exports.join(", ")}`);
+    
     registerLogTransport = sdk.registerLogTransport;
-  } catch {
-    // SDK not available — log transport will not be registered
+  } catch (err) {
+    // 打印加载失败原因
+    logger.error(`[otel] Failed to load openclaw/plugin-sdk: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -436,7 +442,7 @@ export function initTelemetry(
     };
 
     // 尝试加载 SDK 并注册 log transport
-    loadSdk().then(() => {
+    loadSdk(logger).then(() => {
       if (registerLogTransport) {
         unsubscribeLogTransport = registerLogTransport(logTransportHandler);
         logger.info("[otel] Log transport registered for OTLP export via openclaw/plugin-sdk");

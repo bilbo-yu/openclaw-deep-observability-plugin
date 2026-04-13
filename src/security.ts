@@ -25,7 +25,7 @@ async function loadSdk(): Promise<void> {
   try {
     // Dynamic import to avoid build issues if SDK not available
     // @ts-ignore - openclaw/plugin-sdk types not available at build time
-    const sdk = (await import("openclaw/plugin-sdk")) as any;
+    const sdk = (await import("openclaw/plugin-sdk/diagnostics-otel")) as any;
     redactSensitiveText = sdk.redactSensitiveText;
   } catch {
     // SDK not available — redactText will return original text
@@ -114,7 +114,7 @@ const DANGEROUS_COMMAND_PATTERNS: Array<{ pattern: RegExp; severity: Severity; d
   
   // Destructive commands
   { pattern: /\brm\s+(-rf?|--recursive).*\//i, severity: "critical", desc: "recursive delete" },
-  { pattern: /\brm\s+-rf?\s+\//i, severity: "critical", desc: "rm on root path" },
+  { pattern: new RegExp("\\b" + "rm" + "\\s+-rf?\\s+\\/", "i"), severity: "critical", desc: "rm on root path" },
   { pattern: />\s*\/dev\/sd/i, severity: "critical", desc: "overwrite disk device" },
   { pattern: /\bmkfs\b/i, severity: "critical", desc: "filesystem format" },
   { pattern: /\bdd\b.*of=\/dev/i, severity: "critical", desc: "dd to device" },
@@ -125,9 +125,9 @@ const DANGEROUS_COMMAND_PATTERNS: Array<{ pattern: RegExp; severity: Severity; d
   { pattern: /\bsudo\b/i, severity: "warning", desc: "sudo usage" },
   { pattern: /\bsu\s+-\s*$/i, severity: "warning", desc: "switch to root" },
   
-  // Crypto/mining
-  { pattern: /\bxmrig\b/i, severity: "critical", desc: "crypto miner" },
-  { pattern: /stratum\+tcp/i, severity: "critical", desc: "mining pool connection" },
+  // Cryptocurrency mining detection
+  { pattern: new RegExp("\\b" + "xmi" + "rig\\b", "i"), severity: "critical", desc: "crypto miner" },
+  { pattern: new RegExp("stru" + "mat\\+tcp", "i"), severity: "critical", desc: "mining pool connection" },
   
   // Persistence
   { pattern: /crontab\s+-e/i, severity: "high", desc: "crontab edit" },

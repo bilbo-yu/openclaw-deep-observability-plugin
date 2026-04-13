@@ -3,26 +3,25 @@
   "version": "1.0.4",
   "description": "OpenTelemetry deep observability plugin for OpenClaw — traces, metrics, and logs for your AI agent",
   "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    }
-  },
+  "main": "index.ts",
   "files": [
-    "dist",
+    "src",
+    "index.ts",
     "README.md",
     "LICENSE",
     "openclaw.plugin.json",
     "docs/**"
   ],
   "openclaw": {
-    "extensions": [
-      "./dist/index.js"
-    ],
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": "2026.3.24-beta.2",
+      "pluginSdkVersion": "2026.3.24-beta.2"
+    },
     "install": {
       "npmSpec": "openclaw-deep-observability-plugin",
       "localPath": "extensions/openclaw-deep-observability-plugin",
@@ -33,7 +32,6 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ index.ts",
-    "prepublishOnly": "npm run build",
     "release": "standard-version",
     "release:minor": "standard-version --release-as minor",
     "release:major": "standard-version --release-as major"
@@ -71,5 +69,8 @@
   "devDependencies": {
     "standard-version": "^9.5.0",
     "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.24-beta.2"
   }
 }
