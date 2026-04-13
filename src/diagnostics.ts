@@ -40,23 +40,25 @@ import {
   sessionContextMap,
 } from "./session-context.js";
 
+import { onDiagnosticEvent } from "openclaw/plugin-sdk/diagnostics-otel";
 // Import from OpenClaw plugin SDK (loaded lazily)
-let onDiagnosticEvent: ((listener: (evt: any) => void) => () => void) | null =
-  null;
-let sdkLoadAttempted = false;
+// let onDiagnosticEvent: ((listener: (evt: any) => void) => () => void) | null =
+//   null;
+// let sdkLoadAttempted = false;
 
-async function loadSdk(): Promise<void> {
-  if (sdkLoadAttempted) return;
-  sdkLoadAttempted = true;
-  try {
-    // Dynamic import to avoid build issues if SDK not available
-    // @ts-ignore - openclaw/plugin-sdk types not available at build time
-    const sdk = (await import("openclaw/plugin-sdk")) as any;
-    onDiagnosticEvent = sdk.onDiagnosticEvent;
-  } catch {
-    // SDK not available — will use fallback token extraction
-  }
-}
+// async function loadSdk(logger: any): Promise<void> {
+//   if (sdkLoadAttempted) return;
+//   sdkLoadAttempted = true;
+//   try {
+//     // Dynamic import to avoid build issues if SDK not available
+//     // @ts-ignore - openclaw/plugin-sdk types not available at build time
+//     const sdk = (await import("openclaw/plugin-sdk/diagnostics-otel")) as any;
+//     logger.info?.(`[otel] SDK loaded successfully, exports: ${Object.keys(sdk).join(", ")}`);
+//     onDiagnosticEvent = sdk.onDiagnosticEvent;
+//   } catch (err) {
+//     logger.error?.(`[otel] Failed to load SDK: ${err instanceof Error ? err.message : String(err)}`);
+//   }
+// }
 
 /** Tracer instance — set during registerDiagnosticsListener */
 let tracer: ReturnType<typeof trace.getTracer>;
@@ -128,22 +130,22 @@ export async function registerDiagnosticsListener(
   logger: any,
 ): Promise<() => void> {
   // Load the SDK if not already loaded
-  await loadSdk();
+  // await loadSdk(logger);
 
-  if (!onDiagnosticEvent) {
-    logger.debug?.(
-      "[otel] onDiagnosticEvent not available — using fallback token extraction",
-    );
-    return () => {};
-  }
-
+  // if (!onDiagnosticEvent) {
+  //   logger.debug?.(
+  //     "[otel] onDiagnosticEvent not available — using fallback token extraction",
+  //   );
+  //   return () => {};
+  // }
+  diagnosticsLogger = logger;
+  diagnosticsLogger.debug?.(`[otel] subscribing to diagnostic events...`);
   // Initialize global references
   tracer = telemetry.tracer;
   telemetryCounters = telemetry.counters;
   telemetryHistograms = telemetry.histograms;
   tracesEnabled = config.traces;
 
-  diagnosticsLogger = logger;
 
   const { counters, histograms } = telemetry;
 
@@ -504,13 +506,7 @@ export function hasDiagnosticsSupport(): boolean {
   return onDiagnosticEvent !== null;
 }
 
-/**
- * Async check for diagnostics support (loads SDK if needed).
- */
-export async function checkDiagnosticsSupport(): Promise<boolean> {
-  await loadSdk();
-  return onDiagnosticEvent !== null;
-}
+
 
 /**
  * Handle message.queued diagnostic event — creates root span for request lifecycle.
@@ -518,12 +514,13 @@ export async function checkDiagnosticsSupport(): Promise<boolean> {
  */
 function handleMessageQueued(evt: any, captureContent: boolean): void {
   try {
+    diagnosticsLogger.debug?.(`[otel] message.queued: ${JSON.stringify(evt)}`);
     const channel = evt?.channel || "unknown";
     const sessionKey = evt?.sessionKey || "unknown";
     const sessionId = evt?.sessionId || sessionKey;
     const source = evt?.source || "unknown";
     const messageText = evt?.text || evt?.message || "";
-
+    
     // Record official style metrics
     const attrs = {
       "openclaw.channel": channel,
@@ -588,6 +585,7 @@ function handleMessageQueued(evt: any, captureContent: boolean): void {
 function handleMessageProcessed(evt: any, captureContent: boolean): void {
   const sessionKey = evt?.sessionKey || "unknown";
   try {
+    diagnosticsLogger.debug?.(`[otel] message.processed: ${JSON.stringify(evt)}`);
     const success = evt?.outcome === "completed";
     const channel = evt?.channel || "unknown";
     const outcome = evt?.outcome || "unknown";

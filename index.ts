@@ -32,11 +32,14 @@
 
 import { parseConfig, type OtelObservabilityConfig } from "./src/config.js";
 import { initTelemetry, type TelemetryRuntime } from "./src/telemetry.js";
-import { initOpenLLMetry } from "./src/openllmetry.js";
-import { registerHooks } from "./src/hooks.js";
+import { registerHooks, startAutoCleanupStaleSessions, stopAutoCleanupStaleSessions } from "./src/hooks.js";
 import { registerDiagnosticsListener, hasDiagnosticsSupport } from "./src/diagnostics.js";
 
-const otelObservabilityPlugin = {
+import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+
+let telemetry: TelemetryRuntime | null = null;
+
+export default definePluginEntry({
   id: "openclaw-deep-observability-plugin",
   name: "OpenTelemetry Deep Observability",
   description:
@@ -48,11 +51,10 @@ const otelObservabilityPlugin = {
     },
   },
 
-  register(api: any) {
+  register(api: OpenClawPluginApi) {
     const config = parseConfig(api.pluginConfig);
     const logger = api.logger;
-
-    let telemetry: TelemetryRuntime | null = null;
+    
     let unsubscribeDiagnostics: (() => void) | null = null;
 
     // ── RPC: status endpoint ────────────────────────────────────────
@@ -100,29 +102,23 @@ const otelObservabilityPlugin = {
       { commands: ["otel"] }
     );
 
+    
+
     // ── Background service ──────────────────────────────────────────
 
     api.registerService({
       id: "openclaw-deep-observability-plugin",
 
       start: async () => {
-        logger.info("[otel] Starting OpenTelemetry deep observability...");
+        logger.info(`[otel] Starting OpenTelemetry deep observability plugin... config = ${JSON.stringify(config)}`);
 
-        // 1. Initialize our OTel providers FIRST (traces + metrics)
-        //    This registers our TracerProvider as global, so all spans
-        //    (including GenAI wraps) export through our pipeline.
+        // 1. Initialize telemetry at service start time
         telemetry = initTelemetry(config, logger);
 
-        // 2. Wrap LLM SDKs AFTER provider is registered
-        //    The wraps use trace.getTracer() which goes through our provider.
-        if (config.traces) {
-          await initOpenLLMetry(config, logger);
-        }
+        // 2. Start stale session cleanup
+        startAutoCleanupStaleSessions(logger);
 
-        // 3. Register hooks for tool results and command events
-        registerHooks(api, telemetry, config);
-
-        // 4. Subscribe to OpenClaw diagnostic events (model.usage, etc.)
+        // 3. Subscribe to OpenClaw diagnostic events (model.usage, etc.)
         //    This gives us cost data and accurate token counts
         unsubscribeDiagnostics = await registerDiagnosticsListener(telemetry, config, logger);
         if (hasDiagnosticsSupport()) {
@@ -137,6 +133,7 @@ const otelObservabilityPlugin = {
       },
 
       stop: async () => {
+        stopAutoCleanupStaleSessions();
         if (unsubscribeDiagnostics) {
           unsubscribeDiagnostics();
           unsubscribeDiagnostics = null;
@@ -181,12 +178,17 @@ const otelObservabilityPlugin = {
                 text: JSON.stringify(status, null, 2),
               },
             ],
+            details: undefined,
           };
         },
       },
       { optional: true }
     );
-  },
-};
 
-export default otelObservabilityPlugin;
+    // ── Register hooks (telemetry obtained lazily via getter) ──────
+    registerHooks(api, () => telemetry, config);
+    logger.info("[otel] Hooks registered, telemetry will initialize at service start");
+  },
+});
+
+

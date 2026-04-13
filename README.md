@@ -65,6 +65,9 @@ For a detailed comparison with the official plugin, see [Comparison to Official 
 ---
 
 ## Installation
+
+> **⚠️ Minimum Version Requirement**: This plugin requires OpenClaw **`2026.3.24-beta.2`** or later.
+
 There are two ways to install the plugin:
 ### Quick Installation
 ```bash
