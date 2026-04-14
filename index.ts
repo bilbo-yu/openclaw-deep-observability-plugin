@@ -187,7 +187,7 @@ export default definePluginEntry({
 
     // ── Register hooks (telemetry obtained lazily via getter) ──────
     registerHooks(api, () => telemetry, config);
-    logger.info("[otel] Hooks registered, telemetry will initialize at service start");
+    logger.debug?.("[otel] Hooks registered, telemetry will initialize at service start");
   },
 });
 
