@@ -4,20 +4,19 @@ The plugin generates connected distributed traces using OpenClaw's hook-based pl
 
 ## Trace Structure
 
-Every user message produces a trace tree:
+Every user message produces a trace tree. When an agent delegates work to subagents, nested session spans appear as children of the parent root span.
+
+### Simple Request Flow
 
 ```
 openclaw.request (SERVER span — full message lifecycle)
 ├── openclaw.agent.turn (INTERNAL — agent processing)
-│   ├── gen_ai.system: anthropic
-│   ├── gen_ai.provider.name: anthropic
-│   ├── gen_ai.request.model: claude-opus-4-5
-│   ├── gen_ai.response.model: claude-opus-4-5
-│   ├── gen_ai.usage.input_tokens: 4521
-│   ├── gen_ai.usage.output_tokens: 892
-│   ├── gen_ai.usage.cache_read_tokens: 918174
-│   ├── gen_ai.usage.cache_write_tokens: 62437
-│   ├── gen_ai.usage.total_tokens: 998598
+│   ├── gen_ai.system_instructions.chars: 1250
+│   ├── gen_ai.input.messages.chars: 45210
+│   ├── gen_ai.input.messages.size: 12
+│   ├── gen_ai.output.messages.size: 5
+│   ├── gen_ai.output.messages.chars: 8920
+│   ├── gen_ai.agent.used_skills: coding,web_search
 │   ├── chat claude-opus-4-5 (CLIENT span — LLM call)
 │   │   └── traceloop.entity.input/output (if captureContent enabled)
 │   ├── tool.exec (INTERNAL — tool execution)
@@ -25,6 +24,30 @@ openclaw.request (SERVER span — full message lifecycle)
 │   └── tool.Write (INTERNAL — file write)
 └── openclaw.command.new (INTERNAL — if session reset)
 ```
+
+### Subagent Request Flow
+
+When an agent spawns subagents, each subagent gets its own `openclaw.subagent.session` span nested under the parent's root span:
+
+```
+openclaw.request (root span — parent session)
+├── openclaw.agent.turn (parent agent processing)
+│   ├── chat claude-opus-4-5 (LLM call)
+│   └── tool.exec (tool call that triggers subagent spawn)
+├── openclaw.subagent.session (child #1 — subagent lifecycle)
+│   ├── openclaw.agent.turn (subagent's agent processing)
+│   │   ├── chat claude-sonnet-4 (LLM call)
+│   │   └── tool.Read
+│   └── openclaw.subagent.outcome: ok
+├── openclaw.subagent.session (child #2 — subagent lifecycle)
+│   ├── openclaw.agent.turn (subagent's agent processing)
+│   │   ├── chat claude-sonnet-4
+│   │   └── tool.Write
+│   └── openclaw.subagent.outcome: ok
+└── (parent root span ends when all subagents complete)
+```
+
+![Subagent trace example](../images/trace-subagent.png)
 
 All spans within a request share the same `traceId` and are linked via parent-child relationships.
 
@@ -54,7 +77,7 @@ Created by the `message.queued` diagnostic event. This is the root span for the 
 
 ## Agent Turn Span
 
-Created by `before_agent_start`, ended by `agent_end`. Child of the request span.
+Created by `llm_input`, ended by `llm_output`. Child of the request span (or subagent session span for subagents).
 
 | Field | Value |
 |-------|-------|
@@ -66,23 +89,23 @@ Created by `before_agent_start`, ended by `agent_end`. Child of the request span
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `gen_ai.agent.id` | string | Agent identifier |
+| `openclaw.session.key` | string | Session identifier |
 | `gen_ai.conversation.id` | string | Session/conversation identifier |
 | `gen_ai.system` | string | LLM provider (anthropic, openai, etc.) |
-| `gen_ai.provider.name` | string | Same as gen_ai.system |
 | `gen_ai.request.model` | string | Model requested |
-| `gen_ai.response.model` | string | Actual model used |
-| `gen_ai.usage.input_tokens` | int | Input tokens (excluding cache) |
-| `gen_ai.usage.output_tokens` | int | Output tokens |
-| `gen_ai.usage.cache_read_tokens` | int | Tokens read from cache |
-| `gen_ai.usage.cache_write_tokens` | int | Tokens written to cache |
-| `gen_ai.usage.total_tokens` | int | Sum of all token types |
+| `gen_ai.system_instructions.chars` | int | Character count of the system prompt |
+| `gen_ai.input.messages.chars` | int | Total characters in input messages |
+| `gen_ai.input.messages.size` | int | Number of input messages |
+| `gen_ai.output.messages.size` | int | Number of output messages (set at `agent_end`) |
+| `gen_ai.output.messages.chars` | int | Total characters in output messages (set at `agent_end`) |
 | `openclaw.agent.duration_ms` | int | Turn duration in milliseconds |
 | `gen_ai.agent.used_skills` | string | Comma-separated list of skills used by the agent (if any skills were used) |
-| `traceloop.entity.input` | string | User message (if `captureContent` enabled) |
+| `openclaw.agent.error` | string | Error message (on failure, truncated to 500 chars) |
+| `traceloop.entity.input` | string | Serialized message list (if `captureContent` enabled) |
 | `traceloop.entity.output` | string | Agent response (if `captureContent` enabled) |
 
-!!! note "Token Counts"
-    Token counts are **summed across all assistant messages** in the turn. If the agent makes multiple LLM calls (e.g., tool use loop), the totals reflect all calls combined.
+!!! note
+    Token counts (`gen_ai.usage.*`) are available on the individual LLM Chat Spans below, not on the agent turn span.
 
 !!! note "Security Detection"
     If a security event is detected (prompt injection in user message), the span status will be set to `ERROR` with the security alert details.
@@ -151,6 +174,45 @@ Created by `before_tool_call` and ended by `tool_result_persist`. Child of the a
     
     If detected, span status becomes `ERROR` with security alert details.
 
+## Subagent Session Span
+
+Created by `subagent_spawned`, ended by `subagent_ended`. Child of the parent session's root span. This span represents the full lifecycle of a subagent session, including all its agent turns, LLM calls, and tool executions.
+
+| Field | Value |
+|-------|-------|
+| **Span Name** | `openclaw.subagent.session` |
+| **Kind** | `INTERNAL` |
+
+**Attributes (set at spawn):**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `openclaw.session.key` | string | Child session identifier |
+| `gen_ai.conversation.id` | string | Run ID of the subagent task |
+| `openclaw.message.channel` | string | Channel that initiated the request |
+| `openclaw.subagent.label` | string | Human-readable label for the subagent |
+| `openclaw.subagent.agent_id` | string | Agent identifier for the subagent |
+| `openclaw.subagent.mode` | string | Execution mode (e.g., `sync`, `async`) |
+| `openclaw.subagent.parent_session_key` | string | Parent session key |
+
+**Attributes (set at end):**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `openclaw.request.duration_ms` | int | Total subagent session duration |
+| `openclaw.subagent.outcome` | string | Outcome of the subagent (`ok`, `error`, etc.) |
+| `openclaw.subagent.reason` | string | Reason for the subagent ending |
+| `openclaw.request.error` | string | Error description (only set on failure) |
+| `traceloop.entity.input` | string | Subagent input message (if `captureContent` enabled) |
+
+**Status:** `OK` when outcome is `"ok"`, `ERROR` with details otherwise.
+
+!!! note "Parent Span Lifecycle"
+    When all subagent children of a parent session have ended and the parent's agent span has also ended, the parent's root span (`openclaw.request`) is automatically closed and cleaned up.
+
+!!! note "Nesting"
+    Subagents can themselves spawn further subagents, creating arbitrarily deep nesting. Each level follows the same `openclaw.subagent.session` → `openclaw.agent.turn` → child spans pattern.
+
 ## Command Spans
 
 Created when session commands are issued.
@@ -217,14 +279,26 @@ Created when a session is detected as stuck.
 
 The plugin maintains a `sessionContextMap` keyed by `sessionKey`:
 
+### Simple Request Flow
+
 1. `message.queued` (diagnostic event) creates a root span and stores its context
-2. `before_agent_start` creates an agent turn span as a child of the root
-3. `before_tool_call` creates pending tool spans as children of the agent turn
-4. `tool_result_persist` ends the pending tool spans
-5. `agent_end` creates LLM spans from messages, ends the agent turn span
+2. `llm_input` creates an agent turn span as a child of the root
+3. `before_tool_call` records pending tool span data (keyed by `toolCallId`)
+4. `llm_output` ends the agent turn span
+5. `agent_end` creates LLM spans and tool spans from messages, sets final attributes
 6. `message.processed` (diagnostic event) ends the root span, cleans up the context
 
-Stale contexts (no completion within 5 minutes) are automatically cleaned up by a periodic cleanup interval.
+### Subagent Request Flow
+
+1. `subagent_spawned` creates `openclaw.subagent.session` as a child of the parent's root context
+2. The subagent session is stored in `sessionContextMap` under `childSessionKey`
+3. Subsequent `llm_input` / `llm_output` hooks create `openclaw.agent.turn` spans under the subagent session
+4. `subagent_ended` ends the subagent root span and cleans up
+5. If the parent's agent span has ended and all children have ended, the parent's root span is also closed
+
+### Stale Context Cleanup
+
+Stale contexts (no completion within 30 minutes) are automatically cleaned up by a periodic cleanup interval running every 60 seconds.
 
 ## Hook Events vs Diagnostic Events
 
@@ -234,10 +308,18 @@ The plugin uses two complementary event systems:
 
 | Hook | Description |
 |------|-------------|
-| `before_agent_start` | Creates agent turn span |
-| `agent_end` | Ends agent turn, creates LLM spans from messages |
-| `before_tool_call` | Creates pending tool span |
-| `tool_result_persist` | Ends pending tool span |
+| `before_agent_start` | Compatibility hook (agent span creation moved to `llm_input`) |
+| `llm_input` | Creates agent turn span, resolves user input from `message_received` |
+| `llm_output` | Ends agent turn span, captures output content |
+| `agent_end` | Creates LLM/tool spans from messages, sets final agent attributes |
+| `before_tool_call` | Records pending tool span data (keyed by `toolCallId`) |
+| `tool_result_persist` | Updates pending tool span with end time and output |
+| `message_received` | Stores user message input for later resolution |
+| `before_prompt_build` | Injects skill tracking instructions into system prompt |
+| `session_start` | Logs session start event |
+| `session_end` | Logs session end event |
+| `subagent_spawned` | Creates `openclaw.subagent.session` span as child of parent |
+| `subagent_ended` | Ends subagent session span, triggers parent cleanup if needed |
 
 ### Diagnostic Events (via `onDiagnosticEvent`)
 
@@ -258,11 +340,11 @@ The plugin uses two complementary event systems:
 
 ## Example DQL Queries (Dynatrace)
 
-**Token usage per agent turn:**
+**Token usage per LLM call:**
 
 ```sql
 fetch spans, samplingRatio:1
-| filter contains(span.name, "openclaw.agent.turn")
+| filter startsWith(span.name, "chat ")
 | fields start_time, duration, 
          gen_ai.usage.input_tokens,
          gen_ai.usage.output_tokens, 
@@ -291,6 +373,20 @@ fetch spans, samplingRatio:1
 | filter openclaw.session.key == "agent:main:main"
 | fields start_time, span.name, duration, span.kind, trace.id
 | sort start_time desc
+```
+
+**Subagent sessions with outcomes:**
+
+```sql
+fetch spans, samplingRatio:1
+| filter span.name == "openclaw.subagent.session"
+| fields start_time, duration, 
+         openclaw.subagent.label,
+         openclaw.subagent.outcome,
+         openclaw.subagent.reason,
+         openclaw.subagent.parent_session_key
+| sort start_time desc
+| limit 50
 ```
 
 **Security events in traces:**

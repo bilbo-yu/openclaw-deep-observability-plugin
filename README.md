@@ -118,17 +118,13 @@ npx -y openclaw-deep-observability-tools install
 
 After installation, this plugin will export openclaw request traces with parent-child hierarchy like this:
 
-![Trace Example](docs/images/image.png)
+### single agent trace example:
 
-```
-openclaw.request (root span)
-  ├── openclaw.agent.turn
-      ├── chat glm-5 (LLM call #1)
-      ├── tool.exec (shell command)
-      ├── chat glm-5 (LLM call #2)
-      ├── tool.ads-insight-mcp__Application_GetAppsOverview2 (mcp tool call)
-      ├── chat glm-5 (LLM call #3)
-```
+![Trace Example](docs/images/trace.png)
+
+### subagent trace example:
+
+![Trace Example 2](docs/images/trace-subagent.png)
 
 ---
 
