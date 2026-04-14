@@ -472,12 +472,22 @@ export function registerHooks(
         }
       }
       if (agentSpan){
+        const { role, content, stopReason,errorMessage } = event.lastAssistant;
         if (captureContent && event?.lastAssistant) {
-          const { role, content, stopReason } = event.lastAssistant;
           agentSpan.setAttribute(
             "traceloop.entity.output",
-            JSON.stringify({ role, content: redactContent(content).content, stopReason })
+            JSON.stringify({ role, content: redactContent(content).content, stopReason,errorMessage })
           );
+        }
+        if (stopReason && stopReason.toLowerCase().includes('error')) {
+          agentSpan.setAttribute(
+            "openclaw.agent.error",
+            redactText(errorMessage)
+          );
+          agentSpan.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: String(errorMessage).slice(0, 200),
+          });
         }
         logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}`);
         agentSpan.end();
@@ -597,7 +607,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       span.end();
     } catch {
       logger.warn?.(
-        `[otel] command event hook failed: event=${JSON.stringify(event)}}`
+        `[otel] command event hook failed: event=${JSON.stringify(event)}`
       );
     }
   }
@@ -612,7 +622,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         return undefined;
       }
       logger.debug?.(
-        `[otel] agent_end event: ctx: ${JSON.stringify(ctx)}`
+        `[otel] agent_end event: ctx=${JSON.stringify(ctx)}`
       );
       const { tracer, counters, histograms } = telemetry;
       const securityCounters = buildSecurityCounters(counters);
@@ -687,7 +697,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         if (errorMsg) {
           agentSpan.setAttribute(
             "openclaw.agent.error",
-            String(errorMsg).slice(0, 500)
+            redactText(errorMsg)
           );
           agentSpan.setStatus({
             code: SpanStatusCode.ERROR,
@@ -1118,14 +1128,14 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         }
       }
 
+      const { role, stopReason, errorMessage } = msg;
       // Set traceloop.entity.output from content
       const contentArray = msg.content;
       if (contentArray) {
         const outputText = redactContent(contentArray);
         llmSpan.setAttribute("gen_ai.output.messages.chars", outputText.totalChars);
         if (captureContent) {
-          const { role, stopReason } = msg;
-          llmSpan.setAttribute("traceloop.entity.output", JSON.stringify({role, content: outputText.content, stopReason}));
+          llmSpan.setAttribute("traceloop.entity.output", JSON.stringify({role, content: outputText.content, stopReason, errorMessage}));
         }
       }
 
@@ -1165,12 +1175,13 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       }
 
       // Set status based on stopReason
-      const stopReason = msg.stopReason;
-      if (stopReason === "stop" || stopReason === "end_turn") {
-        llmSpan.setStatus({ code: SpanStatusCode.OK });
-      } else if (stopReason) {
-        llmSpan.setStatus({ code: SpanStatusCode.OK });
+      if (stopReason && stopReason.toLowerCase().includes("error")) {
         llmSpan.setAttribute("gen_ai.response.stop_reason", stopReason);
+        llmSpan.setAttribute("openclaw.agent.error", redactText(errorMessage));
+        llmSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: String(errorMessage).slice(0, 200),
+        });
       } else {
         llmSpan.setStatus({ code: SpanStatusCode.OK });
       }
@@ -1189,12 +1200,12 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           );
 
           if (matchedSkills.length > 0) {
-            logger.debug?.(`[otel] Creating skill spans for matched skills: ${JSON.stringify(matchedSkills)}, session=${sessionKey}`);
             
             // Store matched skills in tokenUsage for return
             tokenUsage.usedSkills = matchedSkills;
             
             // Create skill spans with LLM span end time as start time (instant spans)
+            // logger.debug?.(`[otel] Creating skill spans for matched skills: ${JSON.stringify(matchedSkills)}, session=${sessionKey}`);
             // const llmSpanContext = trace.setSpan(parentContext, llmSpan);
             // for (const skillName of matchedSkills) {
             //   const skillSpanName = `skill.${skillName}`;
