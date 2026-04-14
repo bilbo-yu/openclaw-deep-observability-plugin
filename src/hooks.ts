@@ -488,6 +488,10 @@ export function registerHooks(
             code: SpanStatusCode.ERROR,
             message: String(errorMessage).slice(0, 200),
           });
+        } else {
+          agentSpan.setStatus({
+            code: SpanStatusCode.OK,
+          });
         }
         logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}`);
         agentSpan.end();
@@ -704,8 +708,6 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
             message: String(errorMsg).slice(0, 200),
           });
           success = false;
-        } else {
-          agentSpan.setStatus({ code: SpanStatusCode.OK });
         }
         // Record duration histogram
         if (typeof durationMs === "number") {
@@ -728,9 +730,6 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       //   sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
       //   sessionCtx.rootSpan.end();
       // }
-      // Clean up
-      // sessionContextMap.delete(sessionKey);
-      logger.debug?.(`[otel] Trace completed for session=${sessionKey}`);
     } catch {
       logger.warn?.(`[otel] agent_end hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
     }
@@ -1176,8 +1175,8 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
       // Set status based on stopReason
       if (stopReason && stopReason.toLowerCase().includes("error")) {
-        llmSpan.setAttribute("gen_ai.response.stop_reason", stopReason);
-        llmSpan.setAttribute("openclaw.agent.error", redactText(errorMessage));
+        llmSpan.setAttribute("gen_ai.response.finish_reasons", `[${stopReason}]`);
+        llmSpan.setAttribute("gen_ai.output.error", redactText(errorMessage));
         llmSpan.setStatus({
           code: SpanStatusCode.ERROR,
           message: String(errorMessage).slice(0, 200),
