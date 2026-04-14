@@ -13,7 +13,7 @@
  *
  * Context propagation:
  *   - message_received: creates root span, stores in sessionContextMap
- *   - before_agent_start: creates child "agent turn" span under root
+ *   - llm_input: creates child "agent turn" span under root (if not yet created)
  *   - tool_result_persist: creates child tool span under agent turn
  *   - agent_end: ends the agent turn span
  *
@@ -35,6 +35,7 @@ import {
   ContentInfo,
   sessionContextMap,
   pendingToolSpansMap,
+  pendingMessageInputs,
   type SessionTraceContext,
   type PendingToolSpan,
 } from "./session-context.js";
@@ -103,6 +104,16 @@ export function startAutoCleanupStaleSessions(logger: any): void {
         );
       }
     }
+
+    // Clean up stale pending message inputs
+    for (const [messageId, pending] of pendingMessageInputs) {
+      if (now - pending.timestamp > maxAge) {
+        pendingMessageInputs.delete(messageId);
+        logger.debug?.(
+          `[otel] Cleaned up stale pending message input: messageId=${messageId}`,
+        );
+      }
+    }
   }, 60_000);
   logger.info("[otel] Stale session cleanup interval started");
 }
@@ -146,7 +157,7 @@ export function registerHooks(
   // ═══════════════════════════════════════════════════════════════════
 
   // ── before_agent_start ───────────────────────────────────────────
-  // Creates an "agent turn" child span under the root request span.
+  // Agent span creation now handled in llm_input. Hook kept for compatibility.
 
   api.on(
     "before_agent_start",
@@ -231,6 +242,66 @@ export function registerHooks(
   );
   // logger.info("[otel] Registered before_prompt_build hook (via api.on)");
 
+
+
+  api.on(
+    "message_received",
+    (event: any, ctx: any) => {
+      handleMessageReceived(event, ctx);
+    },
+    { priority: -100 }
+  );
+  // api.on(
+  //   "message_sent",
+  //   (event: any, ctx: any) => {
+  //     logger.debug?.(`[otel] message_sent event: event = ${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+  //   },
+  //   { priority: -100 }
+  // );
+  api.on(
+    "session_start",
+    (event: any, ctx: any) => {
+      logger.debug?.(`[otel] session_start event: ctx=${JSON.stringify(ctx)}`);
+    },
+    { priority: -100 }
+  );
+  api.on(
+    "session_end",
+    (event: any, ctx: any) => {
+      logger.debug?.(`[otel] session_end event: ctx=${JSON.stringify(ctx)}`);
+    },
+    { priority: -100 }
+  );
+  api.on(
+    "subagent_spawned",
+    (event: any, ctx: any) => {
+      return handleSubagentSpawned(event, ctx);
+    },
+    { priority: -100 }
+  );
+  api.on(
+    "subagent_ended",
+    (event: any, ctx: any) => {
+      return handleSubagentEnded(event, ctx);
+    },
+    { priority: -100 }
+  );
+
+  // api.on(
+  //   "before_message_write",
+  //   (event: any, ctx: any) => {
+  //     logger.debug?.(`[otel] before_message_write event: event = ${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+  //   },
+  //   { priority: -100 }
+  // );
+  // api.on(
+  //   "message_sending",
+  //   (event: any, ctx: any) => {
+  //     logger.debug?.(`[otel] message_sending event: event = ${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+  //   },
+  //   { priority: -100 }
+  // );
+
   // ═══════════════════════════════════════════════════════════════════
   // EVENT-STREAM HOOKS — registered via api.registerHook()
   // ═══════════════════════════════════════════════════════════════════
@@ -267,43 +338,102 @@ export function registerHooks(
 
   function handleLLMInput(event: any, ctx: any) {
     try {
+        const telemetry = getTelemetry();
+        if (!telemetry) {
+          logger.error?.(
+            "[otel] Telemetry not initialized. Skipping before_agent_start hook."
+          );
+          return undefined;
+        }
         logger.debug?.(`[otel] llm_input event :  ctx=${JSON.stringify(ctx)}`);
         const sessionKey = ctx?.sessionKey || "unknown";
+        const sessionId = ctx?.sessionId || sessionKey;
+        const agentId = ctx?.agentId || "unknown";
         const systemPrompt = event?.systemPrompt || "";
         const prompt = event?.prompt || "";
         const messages = event?.historyMessages || [];
-        const sessionCtx = sessionContextMap.get(sessionKey);
-        const agentSpan = sessionCtx?.agentSpan;
-        // Set messageInput from prompt
-        if (sessionCtx && prompt) {
-          sessionCtx.messageInput = prompt;
-        }
+        const provider = event?.provider || "unknown";
+        const model = event?.model || "unknown";
+        let sessionCtx = sessionContextMap.get(sessionKey);
 
-        // Extract skills from systemPrompt and save to sessionCtx
-        if (sessionCtx && systemPrompt) {
-          const skills = extractSkillsFromSystemPrompt(systemPrompt);
-          if (skills.length > 0) {
-            sessionCtx.skills = skills;
-            logger.debug?.(`[otel] Extracted skills from systemPrompt: ${JSON.stringify(skills)}`);
-          }
-        }
+        // ═══ Create agent span if it doesn't exist (moved from handleBeforeAgentStart) ═══
+        if (!sessionCtx?.agentSpan) {
+            const { tracer } = telemetry;
+            const parentContext = sessionCtx?.rootContext || context.active();
 
-        if (agentSpan) {
-          const { messageList: promptList, totalChars } = buildMessageListForSpan(messages, systemPrompt, prompt);
+            const agentSpan = tracer.startSpan(
+              "openclaw.agent.turn",
+              {
+                kind: SpanKind.INTERNAL,
+                attributes: {
+                  "gen_ai.agent.id": agentId,
+                  "openclaw.session.key": sessionKey,
+                  "gen_ai.conversation.id": sessionId,
+                  "gen_ai.system": provider,
+                  "gen_ai.request.model": model,
+                },
+              },
+              parentContext
+            );
+            const { messageList: promptList, totalChars } = buildMessageListForSpan(messages, systemPrompt, prompt);
 
-          // 设置统计属性（始终设置）
-          agentSpan.setAttribute("gen_ai.system_instructions.chars", systemPrompt.length);
-          agentSpan.setAttribute("gen_ai.input.messages.chars", totalChars);
-          agentSpan.setAttribute("gen_ai.input.messages.size", promptList.length);
+            // 设置统计属性（始终设置）
+            agentSpan.setAttribute("gen_ai.system_instructions.chars", systemPrompt.length);
+            agentSpan.setAttribute("gen_ai.input.messages.chars", totalChars);
+            agentSpan.setAttribute("gen_ai.input.messages.size", promptList.length);
 
-          // 只有 captureContent 为 true 时才设置详细内容
-          if (captureContent) {
-            agentSpan.setAttribute("traceloop.entity.input", JSON.stringify(promptList));
-          }
+            // 只有 captureContent 为 true 时才设置详细内容
+            if (captureContent) {
+              agentSpan.setAttribute("traceloop.entity.input", JSON.stringify(promptList));
+            }
           
+            const agentContext = trace.setSpan(parentContext, agentSpan);
+
+            // ═══ update session context with agent span ═══
+
+            if (!sessionCtx) {
+              // No root span — create a standalone context
+              sessionCtx = {
+                rootSpan: agentSpan,
+                rootContext: agentContext,
+                startTime: Date.now(),
+              };
+              sessionContextMap.set(sessionKey, sessionCtx);
+              logger.warn?.(
+                `[otel] No root span found for session=${sessionKey}, setting agent span as root span`
+              );
+            }
+            
+            sessionCtx.agentSpan = agentSpan;
+            sessionCtx.agentContext = agentContext;
+            sessionCtx.startMessagesLength = messages.length;
+
+            // ═══ Resolve messageInput from message_received via runId ↔ messageId ═══
+            const runId = ctx?.runId;
+            let resolvedInput = prompt;
+            if (runId) {
+              const pendingInput = pendingMessageInputs.get(runId);
+              if (pendingInput) {
+                resolvedInput = pendingInput.content;
+                pendingMessageInputs.delete(runId);
+                logger.debug?.(`[otel] Resolved messageInput from message_received for runId=${runId}`);
+              }
+            }
+            sessionCtx.messageInput = resolvedInput;
+            // Extract skills from systemPrompt and save to sessionCtx
+            const skills = extractSkillsFromSystemPrompt(systemPrompt);
+            if (skills.length > 0) {
+              sessionCtx.skills = skills;
+              logger.debug?.(`[otel] Extracted skills from systemPrompt: ${JSON.stringify(skills)}`);
+            }
+
+            logger.debug?.(
+              `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
+            );
         }
+        
       } catch {
-        // Never let telemetry errors break the main flow
+        logger.warn?.(`[otel] llm_input hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
       }
 
       return undefined;
@@ -312,18 +442,52 @@ export function registerHooks(
 
   function handleLLMOutput(event: any, ctx: any) {
     try {
+      const telemetry = getTelemetry();
+      if (!telemetry) {
+        logger.error?.(
+          "[otel] Telemetry not initialized. Skipping llm_output hook."
+        );
+        return undefined;
+      }
       logger.debug?.(`[otel] llm_output event : ctx=${JSON.stringify(ctx)}`);
       const sessionKey = ctx?.sessionKey || "unknown";
       const lastAssistantTexts = event?.assistantTexts;
 
-      // Set messageOutput from assistantTexts (redacted)
+      // Append messageOutput from assistantTexts
       const sessionCtx = sessionContextMap.get(sessionKey);
-      if (sessionCtx && lastAssistantTexts && Array.isArray(lastAssistantTexts) && lastAssistantTexts.length > 0) {
-        sessionCtx.messageOutput = lastAssistantTexts[lastAssistantTexts.length-1];
+      const agentSpan = sessionCtx?.agentSpan;
+      if (captureContent && sessionCtx && lastAssistantTexts && Array.isArray(lastAssistantTexts) && lastAssistantTexts.length > 0) {
+        if (!sessionCtx.messageOutput) {
+          sessionCtx.messageOutput = [];
+        }
+        for (const text of lastAssistantTexts) {
+          sessionCtx.messageOutput.push(redactText(text));
+        }
+        // Update rootSpan's traceloop.entity.output incrementally
+        if (sessionCtx.rootSpan) {
+          sessionCtx.rootSpan.setAttribute(
+            "traceloop.entity.output",
+            JSON.stringify(sessionCtx.messageOutput),
+          );
+        }
+      }
+      if (agentSpan){
+        if (captureContent && event?.lastAssistant) {
+          const { role, content, stopReason } = event.lastAssistant;
+          agentSpan.setAttribute(
+            "traceloop.entity.output",
+            JSON.stringify({ role, content: redactContent(content).content, stopReason })
+          );
+        }
+        logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}`);
+        agentSpan.end();
+        sessionCtx.agentSpan = undefined;
+      } else {
+        logger.warn?.(`[otel] llm_output hook ignored: Agent span not found for session=${sessionKey}`);
       }
 
     } catch {
-      // Never let telemetry errors break the main flow
+      logger.warn?.(`[otel] llm_output hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
     }
 
     return undefined;
@@ -357,76 +521,14 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
   }
 
   function handleBeforeAgentStart(event: any, ctx: any) {
+    // Agent span creation has been moved to handleLLMInput.
+    // This hook is kept registered to maintain hook chain compatibility.
     try {
-      const telemetry = getTelemetry();
-      if (!telemetry) {
-        logger.error?.(
-          "[otel] Telemetry not initialized. Skipping before_agent_start hook."
-        );
-        return undefined;
-      }
-      const { tracer } = telemetry;
       logger.debug?.(
-        `[otel] before_agent_start event : ${JSON.stringify(ctx)}`
+        `[otel] before_agent_start event : ctx=${JSON.stringify(ctx)}`
       );
-      const sessionKey = event?.sessionKey || ctx?.sessionKey || "unknown";
-      const sessionId = event?.sessionId || sessionKey;
-      const agentId = event?.agentId || ctx?.agentId || "unknown";
-      // const model = event?.model || "unknown";
-      // const prompt = event?.prompt;
-      // logger.debug?.(
-      //   `[otel] before_agent_start hook triggered: agentId=${agentId}, session=${sessionKey}`,
-      // );
-      const sessionCtx = sessionContextMap.get(sessionKey);
-      const parentContext = sessionCtx?.rootContext || context.active();
-      let agentSpan = sessionCtx?.agentSpan;
-      if (!agentSpan) {
-        // Create agent turn span as child of root span
-        agentSpan = tracer.startSpan(
-          "openclaw.agent.turn",
-          {
-            kind: SpanKind.INTERNAL,
-            attributes: {
-              "gen_ai.agent.id": agentId,
-              "openclaw.session.key": sessionKey,
-              "gen_ai.conversation.id": sessionId,
-            },
-          },
-          parentContext
-        );
-
-        logger.debug?.(
-          `[otel] Span starting: name=openclaw.agent.turn, session=${sessionKey}`
-        );
-      }
-
-      const agentContext = trace.setSpan(parentContext, agentSpan);
-
-      // Store agent span context for tool spans
-      if (sessionCtx) {
-        sessionCtx.agentSpan = agentSpan;
-        sessionCtx.agentContext = agentContext;
-        // Store the length of historical messages before this conversation
-        sessionCtx.startMessagesLength = event?.messages?.length || 0;
-      } else {
-        logger.warn?.(
-          `[otel] No root span found for session=${sessionKey}, setting agent span as root span`
-        );
-        // No root span (e.g., heartbeat) — create a standalone context
-        sessionContextMap.set(sessionKey, {
-          rootSpan: agentSpan,
-          rootContext: agentContext,
-          agentSpan,
-          agentContext,
-          startTime: Date.now(),
-          startMessagesLength: event?.messages?.length || 0,
-        });
-      }
-
     } catch {
-      logger.warn?.(
-        `[otel] before_agent_start hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`
-      );
+      // Never let telemetry errors break the main flow
     }
 
     // Return undefined — don't modify system prompt
@@ -526,21 +628,11 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
       // End the agent turn span
       if (agentSpan) {
-        const lastMsg = messages[messages.length - 1] || {};
-        const output = lastMsg.role === "assistant" ? lastMsg.content : {};
-        sessionCtx.messageOutput = toString(redactContent(output).content);
-
         const startOutputMsgOffset = (sessionCtx.startMessagesLength||0) + 1
         if (messages.length > startOutputMsgOffset){
           const { messageList, totalChars } = buildMessageListForSpan(messages.slice(startOutputMsgOffset))
           agentSpan.setAttribute("gen_ai.output.messages.size", messageList.length);
           agentSpan.setAttribute("gen_ai.output.messages.chars", totalChars);
-          if (captureContent) {
-              agentSpan.setAttribute(
-                "traceloop.entity.output",
-                JSON.stringify(messageList)
-              );
-          }
         }else{
           agentSpan.setAttribute("gen_ai.output.messages.size", 0);
           agentSpan.setAttribute("gen_ai.output.messages.chars", 0);
@@ -614,10 +706,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
             "gen_ai.agent.id": agentId,
           });
         }
-
-        logger.debug?.(`[otel] Span ending: name=openclaw.agent.turn, session=${sessionKey}, success=${success}`);
-        agentSpan.end();
-        sessionCtx.agentSpan = undefined;
+        
       } else {
         logger.warn?.(`[otel] No agent span found for session=${sessionKey}, cannot end`);
       }
@@ -671,6 +760,22 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     return undefined;
   }
 
+  function handleMessageReceived(event: any, ctx: any) {
+    try {
+      const messageId = event?.metadata?.messageId;
+      const content = event?.content;
+      if (messageId && typeof content === "string") {
+        pendingMessageInputs.set(messageId, { content, timestamp: Date.now() });
+        logger.debug?.(`[otel] message_received: stored input for messageId=${messageId}, content.length=${content.length}`);
+      } else {
+        logger.debug?.(`[otel] message_received: skipped (messageId=${messageId}, content type=${typeof content})`);
+      }
+    } catch {
+      logger.warn?.(`[otel] message_received hook failed`);
+    }
+    return undefined;
+  }
+
   function handleBeforeToolCall(event: any, ctx: any) {
     try {
       logger.debug?.(
@@ -702,6 +807,186 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
     return undefined;
   }
 
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Subagent Handlers
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Handle subagent_spawned event — creates a subagent rootSpan ("openclaw.subagent")
+   * as a child of the parent session's rootSpan, and stores it in sessionContextMap
+   * so that subsequent llm_input/llm_output hooks can create agentSpans under it.
+   *
+   * Event shape:
+   *   event: { runId, childSessionKey, agentId, label, requester: { channel }, mode }
+   *   ctx:   { runId, childSessionKey, requesterSessionKey }
+   */
+  function handleSubagentSpawned(event: any, ctx: any) {
+    try {
+      const telemetry = getTelemetry();
+      if (!telemetry) {
+        logger.error?.("[otel] Telemetry not initialized. Skipping subagent_spawned hook.");
+        return undefined;
+      }
+      logger.debug?.(`[otel] subagent_spawned event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+
+      const childSessionKey = event?.childSessionKey;
+      if (!childSessionKey) {
+        logger.warn?.("[otel] subagent_spawned: missing childSessionKey, skipping");
+        return undefined;
+      }
+
+      const parentSessionKey = ctx?.requesterSessionKey;
+      const parentCtx = parentSessionKey ? sessionContextMap.get(parentSessionKey) : undefined;
+      const parentContext = parentCtx?.rootContext || context.active();
+
+      const { tracer } = telemetry;
+      const runId = event?.runId || "unknown";
+      const agentId = event?.agentId || "unknown";
+      const label = event?.label || "unknown";
+      const channel = event?.requester?.channel || "unknown";
+      const mode = event?.mode || "unknown";
+      const spanName = "openclaw.subagent.session";
+      const spanStartTime = Date.now();
+      // Create subagent root span as child of parent's rootContext
+      const subagentRootSpan = tracer.startSpan(
+        spanName,
+        {
+          kind: SpanKind.INTERNAL,
+          startTime: spanStartTime,
+          attributes: {
+            "openclaw.session.key": childSessionKey,
+            "gen_ai.conversation.id": runId,
+            "openclaw.message.channel": channel,
+            "openclaw.subagent.label": label,
+            "openclaw.subagent.agent_id": agentId,
+            "openclaw.subagent.mode": mode,
+            "openclaw.subagent.parent_session_key": parentSessionKey || "unknown",
+          },
+        },
+        parentContext,
+      );
+
+      const subagentRootContext = trace.setSpan(parentContext, subagentRootSpan);
+
+      // Register child in parent's childSessionKeys
+      if (parentCtx) {
+        if (!parentCtx.childSessionKeys) {
+          parentCtx.childSessionKeys = new Set();
+        }
+        parentCtx.childSessionKeys.add(childSessionKey);
+      }
+
+      // Store in sessionContextMap so llm_input/llm_output can find it
+      sessionContextMap.set(childSessionKey, {
+        rootSpan: subagentRootSpan,
+        rootContext: subagentRootContext,
+        startTime: spanStartTime,
+        parentSessionKey: parentSessionKey,
+      });
+
+      logger.debug?.(
+        `[otel] Span starting: name=${spanName}, session=${childSessionKey}, parent=${parentSessionKey}`
+      );
+    } catch {
+      logger.warn?.(`[otel] subagent_spawned hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+    }
+    return undefined;
+  }
+
+  /**
+   * Handle subagent_ended event — ends the subagent rootSpan and cleans up.
+   * After ending the subagent, checks if the parent session has any remaining
+   * active children. If all children have ended, ends the parent's rootSpan too.
+   *
+   * Event shape:
+   *   event: { targetSessionKey, targetKind, reason, sendFarewell, runId, endedAt, outcome }
+   *   ctx:   { runId, childSessionKey, requesterSessionKey }
+   */
+  function handleSubagentEnded(event: any, ctx: any) {
+    try {
+      const telemetry = getTelemetry();
+      if (!telemetry) {
+        logger.error?.("[otel] Telemetry not initialized. Skipping subagent_ended hook.");
+        return undefined;
+      }
+      logger.debug?.(`[otel] subagent_ended event: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+
+      const childSessionKey = event?.targetSessionKey || ctx?.childSessionKey;
+      if (!childSessionKey) {
+        logger.warn?.("[otel] subagent_ended: missing targetSessionKey, skipping");
+        return undefined;
+      }
+
+      const sessionCtx = sessionContextMap.get(childSessionKey);
+      if (!sessionCtx?.rootSpan) {
+        logger.warn?.(`[otel] subagent_ended: no rootSpan found for session=${childSessionKey}`);
+        return undefined;
+      }
+
+      const outcome = event?.outcome || "unknown";
+      const reason = event?.reason || "unknown";
+      const endedAt = event?.endedAt || Date.now();
+
+      // End agentSpan if still active
+      if (sessionCtx.agentSpan && sessionCtx.agentSpan !== sessionCtx.rootSpan) {
+        sessionCtx.agentSpan.end();
+        sessionCtx.agentSpan = undefined;
+      }
+
+      // Set final attributes on rootSpan
+      const totalMs = endedAt - sessionCtx.startTime;
+      sessionCtx.rootSpan.setAttribute("openclaw.request.duration_ms", totalMs);
+
+      if (captureContent && sessionCtx.messageInput) {
+        sessionCtx.rootSpan.setAttribute(
+          "traceloop.entity.input",
+          redactText(sessionCtx.messageInput),
+        );
+      }
+      sessionCtx.rootSpan.setAttribute("openclaw.subagent.outcome", outcome);
+      sessionCtx.rootSpan.setAttribute("openclaw.subagent.reason", reason);
+
+      if (outcome !== "ok") {
+        sessionCtx.rootSpan.setAttribute("openclaw.request.error", `Subagent failed: ${reason}`);
+        sessionCtx.rootSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `Subagent ended with outcome=${outcome}, reason=${reason}`,
+        });
+      } else {
+        sessionCtx.rootSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+
+      // End subagent rootSpan
+      sessionCtx.rootSpan.end();
+      logger.debug?.(
+        `[otel] Span ending: name=openclaw.subagent, session=${childSessionKey}, duration=${totalMs}ms`
+      );
+
+      // Clean up subagent from sessionContextMap
+      sessionContextMap.delete(childSessionKey);
+
+      // Remove from parent's childSessionKeys and check if parent can be closed
+      const parentSessionKey = sessionCtx.parentSessionKey;
+      if (parentSessionKey) {
+        const parentCtx = sessionContextMap.get(parentSessionKey);
+        if (parentCtx?.childSessionKeys) {
+          parentCtx.childSessionKeys.delete(childSessionKey);
+          // If agentSpan ended and all children have ended, close parent's rootSpan
+          if (!parentCtx.agentSpan && parentCtx.childSessionKeys.size === 0) {
+            parentCtx.rootSpan.end();
+            sessionContextMap.delete(parentSessionKey);
+            logger.debug?.(
+              `[otel] Span ending: name=openclaw.request, session=${parentSessionKey} (all subagents ended)`
+            );
+          }
+        }
+      }
+    } catch {
+      logger.warn?.(`[otel] subagent_ended hook failed: event=${JSON.stringify(event)}, ctx=${JSON.stringify(ctx)}`);
+    }
+    return undefined;
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // Utility Functions

@@ -663,23 +663,24 @@ function handleMessageProcessed(evt: any, captureContent: boolean): void {
           redactText(sessionCtx.messageInput),
         );
       }
-      if (captureContent && sessionCtx.messageOutput) {
-        sessionCtx.rootSpan.setAttribute(
-          "traceloop.entity.output",
-          redactText(sessionCtx.messageOutput),
-        );
-      }
 
-      sessionCtx.rootSpan.end();
-      diagnosticsLogger.debug?.(`[otel] Span ending: name=openclaw.request, session=${sessionKey}, duration=${totalMs}ms`);
+      // Check if there are active subagent children — if so, delay rootSpan.end()
+      // The last subagent_ended will close the parent rootSpan when all children finish
+      const hasActiveChildren = sessionCtx.childSessionKeys && sessionCtx.childSessionKeys.size > 0;
+      if (hasActiveChildren) {
+        diagnosticsLogger.debug?.(
+          `[otel] Delaying rootSpan end for session=${sessionKey}: ${sessionCtx.childSessionKeys!.size} active subagent(s)`
+        );
+      } else {
+        sessionCtx.rootSpan.end();
+        diagnosticsLogger.debug?.(`[otel] Span ending: name=openclaw.request, session=${sessionKey}, duration=${totalMs}ms`);
+        sessionContextMap.delete(sessionKey);
+      }
     }
 
   } catch (error) {
     diagnosticsLogger.error?.(
       `[otel] Error in handleMessageProcessed: ${error}`,
     );
-  } finally {
-    // Clean up
-    sessionContextMap.delete(sessionKey);
   }
 }

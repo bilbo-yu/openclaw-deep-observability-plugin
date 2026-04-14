@@ -41,11 +41,15 @@ export interface SessionTraceContext {
   agentContext?: Context;
   startTime: number;
   messageInput?: string;
-  messageOutput?: string;
+  messageOutput?: string[];
   skills?: string[];
   // toolCalls: Map<string, ToolCallInfo>;
   // pendingLlmSpans: Map<string, PendingLlmSpan>;
   startMessagesLength?: number;
+  /** For subagent sessions: references the parent session key */
+  parentSessionKey?: string;
+  /** For parent sessions: tracks active child subagent session keys */
+  childSessionKeys?: Set<string>;
 }
 
 /** Map of sessionKey → active trace context. Cleaned up on message.processed or agent_end. */
@@ -53,3 +57,7 @@ export const sessionContextMap = new Map<string, SessionTraceContext>();
 
 /** Global map of toolCallId → pending tool span data, populated by before_tool_call / tool_result_persist hooks. */
 export const pendingToolSpansMap = new Map<string, PendingToolSpan>();
+
+/** Pending user message input from message_received events, keyed by messageId.
+ *  Consumed by llm_input handler which matches via ctx.runId === messageId. */
+export const pendingMessageInputs = new Map<string, { content: string; timestamp: number }>();
