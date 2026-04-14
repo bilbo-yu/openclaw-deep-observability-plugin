@@ -1114,7 +1114,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
       if (inputText){
         llmSpan.setAttribute("gen_ai.input.messages.chars", inputText.totalChars);
         if (captureContent) {
-          llmSpan.setAttribute("traceloop.entity.input", toString(inputText.content));
+          llmSpan.setAttribute("traceloop.entity.input", JSON.stringify({ role: "user", content: inputText.content}));
         }
       }
 
@@ -1124,7 +1124,8 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
         const outputText = redactContent(contentArray);
         llmSpan.setAttribute("gen_ai.output.messages.chars", outputText.totalChars);
         if (captureContent) {
-          llmSpan.setAttribute("traceloop.entity.output", toString(outputText.content));
+          const { role, stopReason } = msg;
+          llmSpan.setAttribute("traceloop.entity.output", JSON.stringify({role, content: outputText.content, stopReason}));
         }
       }
 
@@ -1347,7 +1348,8 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
           const contentInfo = redactContent(contentArray);
           toolSpan.setAttribute("gen_ai.tool.call.result.chars", contentInfo.totalChars);
           if (captureContent) {
-            toolSpan.setAttribute("traceloop.entity.output", toString(contentInfo.content));
+            const {role, stopReason} = outputMessage;
+            toolSpan.setAttribute("traceloop.entity.output", JSON.stringify({role, content: contentInfo.content, stopReason}));
           }
         }
       }
