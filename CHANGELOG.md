@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [2.1.1](https://dg.starstao.top/ads/openclaw-observability-plugin/compare/v2.1.0...v2.1.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* gen_ai.response.finish_reasons format issue ([3fbed7e](https://dg.starstao.top/ads/openclaw-observability-plugin/commit/3fbed7e5645c7b286d3626492d78274ef0013c74))
+
 ## [2.1.0](https://dg.starstao.top/ads/openclaw-observability-plugin/compare/v2.0.1...v2.1.0) (2026-04-14)
 
 
