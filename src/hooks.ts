@@ -70,7 +70,7 @@ export function startAutoCleanupStaleSessions(logger: any): void {
   if (cleanupIntervalHandle) return; // already started
   cleanupIntervalHandle = setInterval(() => {
     const now = Date.now();
-    const maxAge = 30 * 60 * 1000; // 30 minutes
+    const maxAge = 6 * 3600 * 1000; // 6 hours
 
     // Clean up stale session contexts
     for (const [key, ctx] of sessionContextMap) {
