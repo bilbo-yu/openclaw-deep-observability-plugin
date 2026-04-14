@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.1.0](https://dg.starstao.top/ads/openclaw-observability-plugin/compare/v2.0.1...v2.1.0) (2026-04-14)
+
+
+### Features
+
+* handle subagent case, create "openclaw.subagent.session" child span to rootSpan; set rootSpan's output to all llm_output's last assistant texts ([964ee9e](https://dg.starstao.top/ads/openclaw-observability-plugin/commit/964ee9e0a7588a7480be785f162d937752ece764))
+
+
+### Bug Fixes
+
+* agentSpan status should be the same as the last child span status ([c688600](https://dg.starstao.top/ads/openclaw-observability-plugin/commit/c688600c277cd9fa888eca7365edb80a488e19ec))
+* if the stopReason includes 'error', set llm span and agent span to error ([2e0d7f7](https://dg.starstao.top/ads/openclaw-observability-plugin/commit/2e0d7f76f8154a2c75d29a46860950ac4c0d6f82))
+
 ### [2.0.1](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/compare/v2.0.0...v2.0.1) (2026-04-13)
 
 
