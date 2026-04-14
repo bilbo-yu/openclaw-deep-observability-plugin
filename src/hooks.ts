@@ -1175,7 +1175,7 @@ As the core agent of the OpenClaw system, you must adhere to the following logic
 
       // Set status based on stopReason
       if (stopReason && stopReason.toLowerCase().includes("error")) {
-        llmSpan.setAttribute("gen_ai.response.finish_reasons", `[${stopReason}]`);
+        llmSpan.setAttribute("gen_ai.response.finish_reasons", JSON.stringify([stopReason]));
         llmSpan.setAttribute("gen_ai.output.error", redactText(errorMessage));
         llmSpan.setStatus({
           code: SpanStatusCode.ERROR,
