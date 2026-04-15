@@ -1,7 +1,7 @@
 # OpenClaw Deep Observability
 
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-apache2.0-yellow.svg)](https://opensource.org/licenses/apache2.0)
 
 📖 **[Full Documentation](https://github.com/bilbo-yu/openclaw-deep-observability-plugin/blob/main/docs/index.md)** — Setup guides, configuration reference, and backend examples.
 
